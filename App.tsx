@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 
 import { initDB, api } from './services/db';
+import { syncFromSupabase } from './services/supabase';
 import { User, UserRole, Task, AppSettings, PermissionKey, ToastMessage, ToastType, Notification, SidebarItemConfig } from './types';
 import { toPersianDigits, formatJalali, generateId, checkPermission, getIcon, DEFAULT_SIDEBAR_CONFIG, getRelativeDateLabel } from './utils';
 import { Modal, JalaliDatePicker, ToastContainer } from './components/Shared';
@@ -765,15 +766,15 @@ const App = () => {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   useEffect(() => {
-    initDB();
-    // Trigger automation checks (e.g. deadlines)
-    api.automation.runChecks();
-    
-    const storedUser = localStorage.getItem('xrm_current_user');
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
-    }
-    refreshSettings().then(() => setLoading(false));
+    const init = async () => {
+      await syncFromSupabase();
+      initDB();
+      api.automation.runChecks();
+      const storedUser = localStorage.getItem('xrm_current_user');
+      if (storedUser) setUser(JSON.parse(storedUser));
+      refreshSettings().then(() => setLoading(false));
+    };
+    init();
   }, []);
 
   const refreshSettings = async () => {

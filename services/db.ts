@@ -1,6 +1,7 @@
 
 import { User, Client, Project, Transaction, Log, UserRole, UserStatus, AppSettings, Task, FinanceCategory, Department, Message, ChatThread, TransactionType, Invoice, Notification, NotificationType, ProjectStatus, ManagerialBroadcast, NotificationPriority, TransactionCategoryItem } from '../types';
 import { generateId, DEFAULT_ROLE_PERMISSIONS, DEFAULT_SIDEBAR_CONFIG, daysBetween } from '../utils';
+import { pushToSupabase, syncFromSupabase } from './supabase';
 
 // Keys
 const KEYS = {
@@ -93,8 +94,9 @@ const getItems = <T>(key: string): T[] => {
   return str ? JSON.parse(str) : [];
 };
 
-const saveItems = (key: string, items: any[]) => {
+const saveItems = async (key: string, items: any[]): Promise<void> => {
   localStorage.setItem(key, JSON.stringify(items));
+  await pushToSupabase(key, items);
 };
 
 const createNotificationInternal = (
@@ -153,6 +155,7 @@ import { LedgerSnapshotService } from './ledger';
 export const api = {
   auth: {
     login: async (username: string, password: string): Promise<User | null> => {
+      await syncFromSupabase();
       await delay();
       const users = getItems<User>(KEYS.USERS);
       const user = users.find(u => u.username === username && u.passwordHash === password && u.status !== UserStatus.Deleted);
