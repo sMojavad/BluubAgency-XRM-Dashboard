@@ -155,7 +155,6 @@ import { LedgerSnapshotService } from './ledger';
 export const api = {
   auth: {
     login: async (username: string, password: string): Promise<User | null> => {
-      await syncFromSupabase();
       await delay();
       const users = getItems<User>(KEYS.USERS);
       const user = users.find(u => u.username === username && u.passwordHash === password && u.status !== UserStatus.Deleted);
