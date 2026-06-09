@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useContext, useRef, useMemo } from 'react';
 import { api } from '../services/db';
 import { AuthContext } from '../AuthContext';
-import { Transaction, TransactionType, FinanceCategory, TransactionStatus, PaymentMethodType, TransactionCategoryItem, Project, Client, Invoice, PartialPayment, UserRole, User } from '../types';
+import { Transaction, TransactionType, FinanceCategory, TransactionStatus, PaymentMethodType, TransactionCategoryItem, Project, Client, Invoice, PartialPayment, UserRole, UserStatus, User } from '../types';
 import { LedgerEngine, LedgerResult } from '../services/ledger';
 import { Plus, ArrowUpCircle, ArrowDownCircle, Paperclip, X, CheckCircle, Ban, Eye, XCircle, Trash2, AlertCircle, RotateCcw, Tag, Check, Lock, ShieldCheck, Link as LinkIcon, Briefcase, User as UserIcon, FileText, Calendar, CreditCard, MoreHorizontal, Clock, Search, Filter, ChevronDown, DollarSign, Wallet, CalendarRange, TrendingUp, TrendingDown, ChevronUp, Layers, List, ChevronLeft, Edit2, Save, CornerDownRight, Users, Book } from 'lucide-react';
 import { Modal, CurrencyInput, JalaliDatePicker } from '../components/Shared';
@@ -143,6 +143,7 @@ const FinanceView = () => {
           if (entityMenuRef.current && !entityMenuRef.current.contains(event.target as Node)) setOpenEntityMenu(false);
           if (payeeMenuRef.current && !payeeMenuRef.current.contains(event.target as Node)) setOpenPayeeMenu(false);
           if (advCategoryRef.current && !advCategoryRef.current.contains(event.target as Node)) setOpenAdvCategory(false);
+          if (visibleToRef.current && !visibleToRef.current.contains(event.target as Node)) setOpenVisibleToMenu(false);
       };
       document.addEventListener("mousedown", handleClickOutside);
       return () => document.removeEventListener("mousedown", handleClickOutside);
@@ -169,6 +170,10 @@ const FinanceView = () => {
   
   const [selectedParentCat, setSelectedParentCat] = useState<string>('');
   const [viewAttachment, setViewAttachment] = useState<string | null>(null);
+
+  // Granular access control
+  const visibleToRef = useRef<HTMLDivElement>(null);
+  const [openVisibleToMenu, setOpenVisibleToMenu] = useState(false);
 
   // Fallback map for legacy sequence numbers
   const legacySequenceMap = useMemo(() => {
@@ -281,7 +286,22 @@ const FinanceView = () => {
 
   const getTransactionsFiltered = (currentFilters: typeof filters) => {
       let data = transactions;
-      
+
+      // --- GRANULAR ACCESS CONTROL ---
+      if (!isSuperAdmin) {
+          const uid = user?.id || '';
+          if (activeTab === FinanceCategory.Personal) {
+              // Personal tab: only own personal transactions
+              data = data.filter(t => t.createdBy === uid);
+          } else {
+              // Agency/Ledger: transactions explicitly shared OR created by this user
+              data = data.filter(t =>
+                  t.createdBy === uid ||
+                  (t.visibleTo && t.visibleTo.includes(uid))
+              );
+          }
+      }
+
       // Scoping based on Tab
       if (activeTab !== 'Ledger') {
           data = data.filter(t => (t.category || FinanceCategory.Agency) === activeTab);
@@ -563,18 +583,20 @@ const FinanceView = () => {
               const catScope = activeTab === 'Ledger' ? FinanceCategory.Agency : activeTab;
 
               const newTx = {
-                  ...finalData, 
-                  category: catScope, 
-                  id: generateId(), 
+                  ...finalData,
+                  category: catScope,
+                  id: generateId(),
                   sequenceNo: nextSeq,
-                  date: finalData.date || new Date().toISOString(), 
-                  createdAt: new Date().toISOString(), 
-                  title: finalData.title || 'تراکنش بدون عنوان', 
-                  description: finalData.description || '', 
-                  status: finalData.status || 'Registered', 
+                  date: finalData.date || new Date().toISOString(),
+                  createdAt: new Date().toISOString(),
+                  title: finalData.title || 'تراکنش بدون عنوان',
+                  description: finalData.description || '',
+                  status: finalData.status || 'Registered',
                   installmentNo: nextInstallmentNo,
-                  payeeId: finalData.type === TransactionType.Expense ? finalData.payeeId : undefined, 
+                  payeeId: finalData.type === TransactionType.Expense ? finalData.payeeId : undefined,
                   payeeName: finalData.type === TransactionType.Expense ? finalData.payeeName : undefined,
+                  createdBy: user!.id,
+                  visibleTo: finalData.visibleTo || [],
               } as Transaction;
 
               if (finalData.invoiceId && finalData.installmentTotal && finalData.type === TransactionType.Income) {
@@ -1509,6 +1531,63 @@ const FinanceView = () => {
                        <button type="button" onClick={() => setFormData({ ...formData, status: 'Approved' })} className={`flex-1 py-2 rounded-lg text-sm font-bold transition flex items-center justify-center gap-2 ${formData.status === 'Approved' ? 'bg-white shadow text-emerald-600' : 'text-gray-500'}`}><ShieldCheck size={16} /> تایید نهایی</button>
                    </div>
                </div>
+
+               {/* VISIBLE TO: only shown to SuperAdmin */}
+               {isSuperAdmin && (
+                   <div className="relative" ref={visibleToRef}>
+                       <label className="block text-sm font-bold mb-1 flex items-center gap-1.5">
+                           <Eye size={14} className="text-primary-500"/> دسترسی مشاهده
+                           <span className="text-[10px] font-normal text-gray-400">(مدیرکل همیشه دسترسی دارد)</span>
+                       </label>
+                       <button
+                           type="button"
+                           onClick={() => setOpenVisibleToMenu(v => !v)}
+                           className="w-full p-3 border border-gray-200 dark:border-slate-700 rounded-xl dark:bg-slate-900 outline-none text-sm text-right flex items-center justify-between hover:border-primary-400 transition"
+                       >
+                           <span className="text-gray-600 dark:text-gray-300 truncate">
+                               {(formData.visibleTo || []).length === 0
+                                   ? 'فقط مدیرکل'
+                                   : users
+                                       .filter(u => (formData.visibleTo || []).includes(u.id))
+                                       .map(u => `${u.firstName} ${u.lastName}`)
+                                       .join('، ')
+                               }
+                           </span>
+                           <ChevronDown size={14} className={`shrink-0 transition-transform text-gray-400 ${openVisibleToMenu ? 'rotate-180' : ''}`}/>
+                       </button>
+                       {openVisibleToMenu && (
+                           <div className="absolute bottom-full mb-2 right-0 w-full bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-gray-100 dark:border-slate-700 z-50 p-2 flex flex-col gap-1 animate-in fade-in zoom-in-95 duration-150 max-h-52 overflow-y-auto">
+                               {users
+                                   .filter(u => u.role === UserRole.Admin && u.id !== user?.id && u.status !== 'Deleted' && u.status !== 'Inactive')
+                                   .map(u => {
+                                       const isSelected = (formData.visibleTo || []).includes(u.id);
+                                       return (
+                                           <button
+                                               key={u.id}
+                                               type="button"
+                                               onClick={() => {
+                                                   const current = formData.visibleTo || [];
+                                                   const updated = isSelected
+                                                       ? current.filter(id => id !== u.id)
+                                                       : [...current, u.id];
+                                                   setFormData(prev => ({ ...prev, visibleTo: updated }));
+                                               }}
+                                               className={`w-full text-right px-3 py-2 text-sm rounded-xl font-medium transition flex items-center justify-between gap-2 ${isSelected ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/20' : 'hover:bg-gray-50 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-200'}`}
+                                           >
+                                               <span>{u.firstName} {u.lastName}</span>
+                                               <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition ${isSelected ? 'bg-primary-500 border-primary-500' : 'border-gray-300 dark:border-slate-500'}`}>
+                                                   {isSelected && <Check size={10} className="text-white" strokeWidth={3}/>}
+                                               </div>
+                                           </button>
+                                       );
+                                   })}
+                               {users.filter(u => u.role === UserRole.Admin && u.id !== user?.id && u.status !== 'Deleted' && u.status !== 'Inactive').length === 0 && (
+                                   <p className="text-xs text-gray-400 text-center py-3">ادمین دیگری در سیستم نیست</p>
+                               )}
+                           </div>
+                       )}
+                   </div>
+               )}
 
                <div className="pt-4 flex justify-end gap-3 border-t border-gray-100 dark:border-slate-700">
                    <button type="button" onClick={() => setIsModalOpen(false)} className="px-6 py-3 rounded-xl border border-gray-200 dark:border-slate-700 text-gray-500 font-bold hover:bg-gray-50 dark:hover:bg-slate-700 transition">انصراف</button>

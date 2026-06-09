@@ -239,6 +239,10 @@ export interface Transaction {
   systemKey?: string; // For idempotent system transactions (e.g. commissions)
   isInstallment?: boolean; // To distinguish invoice receipts from linked expenses
 
+  // Granular Access Control
+  createdBy?: string;    // userId of creator
+  visibleTo?: string[];  // userIds that can see this (empty = only Admin/creator)
+
   createdAt: string;
   updatedAt?: string;
 }
@@ -399,6 +403,9 @@ export interface Invoice {
   logoUrl?: string;
   signatureUrl?: string; 
   
+  // Granular Access Control
+  visibleTo?: string[];  // userIds that can see this (empty = only Admin/creator)
+
   createdAt: string;
   updatedAt: string;
   createdBy: string;
