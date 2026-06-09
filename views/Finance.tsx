@@ -206,6 +206,13 @@ const FinanceView = () => {
 
   useEffect(() => { loadData(); }, []);
 
+  // Real-time sync: reload data whenever App.tsx polling pulls new data from Supabase
+  useEffect(() => {
+    const handleSync = () => loadData();
+    window.addEventListener('xrm-data-synced', handleSync);
+    return () => window.removeEventListener('xrm-data-synced', handleSync);
+  }, []);
+
   // Sync parent category
   useEffect(() => {
       if (formData.categoryId) {
@@ -858,6 +865,18 @@ const FinanceView = () => {
                                    سیستمی
                                </span>
                            )}
+
+                           {/* Creator Badge */}
+                           {t.createdBy && (() => {
+                               const creator = users.find(u => u.id === t.createdBy);
+                               if (!creator) return null;
+                               const isMe = creator.id === user?.id;
+                               return (
+                                   <span className={`inline-flex items-center gap-1 text-[9px] px-2 py-0.5 rounded-full font-bold border shrink-0 ${isMe ? 'bg-sky-50 text-sky-600 border-sky-100' : 'bg-violet-50 text-violet-600 border-violet-100'}`}>
+                                       <UserIcon size={9}/> {creator.firstName} {creator.lastName}
+                                   </span>
+                               );
+                           })()}
                            
                            {activeTab === 'Ledger' && (
                                <span className={`text-[9px] px-1.5 py-0.5 rounded border ${t.category === FinanceCategory.Personal ? 'bg-amber-50 text-amber-600 border-amber-200' : 'bg-blue-50 text-blue-600 border-blue-200'}`}>
@@ -1558,7 +1577,7 @@ const FinanceView = () => {
                        {openVisibleToMenu && (
                            <div className="absolute bottom-full mb-2 right-0 w-full bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-gray-100 dark:border-slate-700 z-50 p-2 flex flex-col gap-1 animate-in fade-in zoom-in-95 duration-150 max-h-52 overflow-y-auto">
                                {users
-                                   .filter(u => u.role === UserRole.Admin && u.id !== user?.id && u.status !== 'Deleted' && u.status !== 'Inactive')
+                                   .filter(u => u.id !== user?.id && u.status !== UserStatus.Deleted && u.status !== UserStatus.Inactive)
                                    .map(u => {
                                        const isSelected = (formData.visibleTo || []).includes(u.id);
                                        return (
@@ -1574,15 +1593,18 @@ const FinanceView = () => {
                                                }}
                                                className={`w-full text-right px-3 py-2 text-sm rounded-xl font-medium transition flex items-center justify-between gap-2 ${isSelected ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/20' : 'hover:bg-gray-50 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-200'}`}
                                            >
+                                               <span className="flex flex-col gap-0.5 text-right">
                                                <span>{u.firstName} {u.lastName}</span>
+                                               <span className="text-[9px] opacity-50 font-normal">{u.role === UserRole.Admin ? 'مدیرکل' : u.role === UserRole.Manager ? 'منیجر' : u.role === UserRole.TeamMember ? 'عضو تیم' : u.role}</span>
+                                           </span>
                                                <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition ${isSelected ? 'bg-primary-500 border-primary-500' : 'border-gray-300 dark:border-slate-500'}`}>
                                                    {isSelected && <Check size={10} className="text-white" strokeWidth={3}/>}
                                                </div>
                                            </button>
                                        );
                                    })}
-                               {users.filter(u => u.role === UserRole.Admin && u.id !== user?.id && u.status !== 'Deleted' && u.status !== 'Inactive').length === 0 && (
-                                   <p className="text-xs text-gray-400 text-center py-3">ادمین دیگری در سیستم نیست</p>
+                               {users.filter(u => u.id !== user?.id && u.status !== UserStatus.Deleted && u.status !== UserStatus.Inactive).length === 0 && (
+                                   <p className="text-xs text-gray-400 text-center py-3">کاربر دیگری در سیستم نیست</p>
                                )}
                            </div>
                        )}

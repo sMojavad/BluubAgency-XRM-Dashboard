@@ -777,6 +777,17 @@ const App = () => {
     init();
   }, []);
 
+  // Realtime polling — every 15s pull from Supabase and notify all views
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      if (localStorage.getItem('xrm_current_user')) {
+        await syncFromSupabase();
+        window.dispatchEvent(new CustomEvent('xrm-data-synced'));
+      }
+    }, 15000);
+    return () => clearInterval(interval);
+  }, []);
+
   const refreshSettings = async () => {
       const s = await api.settings.get();
       setSettings(s);
