@@ -1,6 +1,6 @@
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
-const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL as string) || 'https://xfzgpvycaifmcbgrnknb.supabase.co';
+const SUPABASE_KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY as string) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhmemdwdnljYWlmbWNiZ3Jua25iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk1NjcxMTUsImV4cCI6MjA5NTE0MzExNX0.sDo1jIyP6EelDoEcB1tPdG8Xb-3L1xGNLa86pgLy2Zg';
 
 const headers = {
   'Content-Type': 'application/json',
