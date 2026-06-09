@@ -89,16 +89,14 @@ useEffect(() => {
 ```
 
 ## GitHub
-- **Repo**: https://github.com/sMojavad/XRM-3.1.4
-- **Branch اصلی**: master (کد اینجاست)
-- **Branch Vercel**: main (Vercel این رو track میکنه)
-- **Push به Vercel**: `git push origin master:main --force`
+- **Repo**: https://github.com/sMojavad/BluubAgency-XRM-Dashboard
+- **Branch اصلی**: main
+- **Local path**: J:\Ai\Claude\Projects\2- BluubAgency XRM Dashboard
 
 ## Vercel
-- **Project**: xrm-3-1-4
 - **Domain**: xrm.bluubpro.ir
 - **Auto Deploy**: از branch main
-- **Env Vars**: VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY تنظیم شده
+- **Env Vars**: VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY باید در Vercel تنظیم شوند
 
 ## workflow توسعه
 ```bash
@@ -109,7 +107,7 @@ npm run dev
 # deploy به production
 git add .
 git commit -m "feat: توضیح تغییر"
-git push origin master:main --force
+git push origin main
 ```
 
 ## نکات مهم
