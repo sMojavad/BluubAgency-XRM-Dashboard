@@ -784,7 +784,7 @@ const App = () => {
         await syncFromSupabase();
         window.dispatchEvent(new CustomEvent('xrm-data-synced'));
       }
-    }, 15000);
+    }, 5000);
     return () => clearInterval(interval);
   }, []);
 
