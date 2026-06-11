@@ -495,6 +495,13 @@ export interface AppSettings {
       volume?: number; // 0..1
       customSounds?: { id: string; name: string; dataUrl: string }[];
   };
+  // Bell notification (alerts) sound config — same shape as chat sound
+  notificationBellSound?: {
+      enabled: boolean;
+      selectedId: string;
+      volume?: number;
+      customSounds?: { id: string; name: string; dataUrl: string }[];
+  };
 }
 
 // --- TOAST TYPES ---

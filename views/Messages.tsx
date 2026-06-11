@@ -143,7 +143,9 @@ const MessagesView = () => {
           isSeen: false
       };
       await api.messages.sendMessage(msg);
-      setMessages(prev => [...prev, msg]);
+      // Idempotent append: sendMessage fires 'messagesUpdated' which may already
+      // reload this message from storage — avoid adding a duplicate.
+      setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg]);
 
       // Notification sound on send
       playNotificationSound(settings?.notificationSound);

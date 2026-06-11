@@ -63,7 +63,43 @@
       .dark ::-webkit-scrollbar-thumb {
         background: #475569;
       }
-      
+
+      /* Soft, subtle horizontal scrollbar (e.g. Settings tab bar) */
+      .soft-scrollbar {
+        scrollbar-width: thin;
+        scrollbar-color: rgba(20,184,166,0.35) transparent;
+      }
+      .soft-scrollbar::-webkit-scrollbar {
+        height: 6px;
+      }
+      .soft-scrollbar::-webkit-scrollbar-track {
+        background: transparent;
+        margin: 0 8px;
+      }
+      .soft-scrollbar::-webkit-scrollbar-thumb {
+        background: rgba(20,184,166,0.25);
+        border-radius: 999px;
+        transition: background 0.2s ease;
+      }
+      .soft-scrollbar:hover::-webkit-scrollbar-thumb {
+        background: rgba(20,184,166,0.5);
+      }
+      .dark .soft-scrollbar::-webkit-scrollbar-thumb {
+        background: rgba(45,212,191,0.25);
+      }
+      .dark .soft-scrollbar:hover::-webkit-scrollbar-thumb {
+        background: rgba(45,212,191,0.5);
+      }
+
+      /* Hide scrollbar utility */
+      .no-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+      .no-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+
       /* Print Styles */
       @media screen {
         .print-only-container {

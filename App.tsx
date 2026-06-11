@@ -8,6 +8,7 @@ import {
 
 import { initDB, api } from './services/db';
 import { syncFromSupabase } from './services/supabase';
+import { playNotificationSound } from './services/sound';
 import { User, UserRole, Task, AppSettings, PermissionKey, ToastMessage, ToastType, Notification, SidebarItemConfig } from './types';
 import { toPersianDigits, formatJalali, generateId, checkPermission, getIcon, DEFAULT_SIDEBAR_CONFIG, getRelativeDateLabel } from './utils';
 import { Modal, JalaliDatePicker, ToastContainer } from './components/Shared';
@@ -342,7 +343,8 @@ const ChangePasswordModal = ({ isOpen, onClose, user, logout, showToast }: any) 
 };
 
 const TopBar = () => {
-  const { user, logout, previewUser, setPreviewUser, showToast } = useContext(AuthContext);
+  const { user, logout, previewUser, setPreviewUser, showToast, settings } = useContext(AuthContext);
+  const prevUnreadRef = useRef<number | null>(null);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
   const [timerInterval, setTimerInterval] = useState<any>(null);
@@ -372,6 +374,12 @@ const TopBar = () => {
       const fetchNotifs = async () => {
           if(user) {
               const data = await api.notifications.getAll(user.id);
+              const unread = data.filter(n => !n.isRead).length;
+              // Play bell sound when a NEW unread notification arrives (not on first load)
+              if (prevUnreadRef.current !== null && unread > prevUnreadRef.current) {
+                  playNotificationSound(settings?.notificationBellSound);
+              }
+              prevUnreadRef.current = unread;
               setNotifications(data);
           }
       };
@@ -385,7 +393,7 @@ const TopBar = () => {
           clearInterval(interval);
           window.removeEventListener('notificationUpdated', handleUpdate);
       };
-  }, [user]);
+  }, [user, settings]);
 
   // Click Outside for Notification Dropdown
   useEffect(() => {
