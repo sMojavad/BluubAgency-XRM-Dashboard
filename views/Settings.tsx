@@ -4,8 +4,9 @@ import { api } from '../services/db';
 import { AuthContext } from '../AuthContext';
 import { Log, User, UserRole, AppSettings, PermissionKey, SidebarItemConfig, TransactionCategoryItem } from '../types';
 import { formatJalaliShort, checkPermission, ALL_PERMISSIONS, DEFAULT_ROLE_PERMISSIONS, getIcon, toPersianDigits, generateId } from '../utils';
-import { Users, Shield, Trash2, Edit2, Save, AlertTriangle, FileText, Image as ImageIcon, PenTool, Percent, Menu, Lock, CheckCircle, XCircle, ChevronUp, ChevronDown, Eye, GripVertical, Activity, Filter, Search, FolderKanban, DollarSign, CheckSquare, Settings as SettingsIcon, Clock, Calendar, List, AlignLeft, Wallet, Plus, ArrowRight, Archive, RotateCcw } from 'lucide-react';
+import { Users, Shield, Trash2, Edit2, Save, AlertTriangle, FileText, Image as ImageIcon, PenTool, Percent, Menu, Lock, CheckCircle, XCircle, ChevronUp, ChevronDown, Eye, GripVertical, Activity, Filter, Search, FolderKanban, DollarSign, CheckSquare, Settings as SettingsIcon, Clock, Calendar, List, AlignLeft, Wallet, Plus, ArrowRight, Archive, RotateCcw, Volume2, VolumeX, Play, Music, Upload } from 'lucide-react';
 import { Modal } from '../components/Shared';
+import { BUILTIN_SOUNDS, previewSound } from '../services/sound';
 
 const SettingsView = () => {
   const { user, refreshSettings, hasPermission, setPreviewUser, previewUser, settings: globalSettings, showToast, confirmAction } = useContext(AuthContext);
@@ -32,6 +33,15 @@ const SettingsView = () => {
       tabletRespPercent: 15,
       darkModePercent: 10
   });
+
+  // Chat notification sound config
+  const [notificationSound, setNotificationSound] = useState<NonNullable<AppSettings['notificationSound']>>({
+      enabled: true,
+      selectedId: 'ding',
+      volume: 0.6,
+      customSounds: []
+  });
+  const soundFileRef = React.useRef<HTMLInputElement>(null);
 
   // --- NEW: Permission & Menu States ---
   const [sidebarItems, setSidebarItems] = useState<SidebarItemConfig[]>([]);
@@ -62,7 +72,8 @@ const SettingsView = () => {
       if(s.sidebarConfig) setSidebarItems(s.sidebarConfig);
       if(s.rolePermissions) setRoleMatrix(s.rolePermissions);
       if(s.projectHealthMessages) setProjectHealthMessages(s.projectHealthMessages);
-      
+      if(s.notificationSound) setNotificationSound({ enabled: true, selectedId: 'ding', volume: 0.6, customSounds: [], ...s.notificationSound });
+
       // Load Invoice Settings
       setInvoiceSettings({
           defaultLogoUrl: s.defaultLogoUrl || '',
@@ -81,6 +92,7 @@ const SettingsView = () => {
           businessRules,
           policies,
           projectHealthMessages,
+          notificationSound,
           // Save Invoice Settings
           defaultLogoUrl: invoiceSettings.defaultLogoUrl,
           defaultSignatureUrl: invoiceSettings.defaultSignatureUrl,
@@ -94,6 +106,31 @@ const SettingsView = () => {
       setSettings(newSettings);
       await refreshSettings(); // Update Context
       showToast('تنظیمات با موفقیت ذخیره شد', 'success');
+  };
+
+  // --- Notification Sound Handlers ---
+  const handleUploadSound = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      if (!file.type.startsWith('audio/')) { showToast('فقط فایل صوتی مجاز است', 'error'); return; }
+      if (file.size > 1024 * 1024) { showToast('حجم فایل صوتی باید کمتر از ۱ مگابایت باشد', 'error'); return; }
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+          const dataUrl = ev.target?.result as string;
+          const newSound = { id: generateId(), name: file.name.replace(/\.[^/.]+$/, ''), dataUrl };
+          setNotificationSound(prev => ({ ...prev, customSounds: [...(prev.customSounds || []), newSound], selectedId: newSound.id }));
+          showToast('صدای جدید اضافه شد — برای ذخیره دکمه ذخیره را بزنید', 'success');
+      };
+      reader.readAsDataURL(file);
+      e.target.value = '';
+  };
+
+  const handleRemoveSound = (id: string) => {
+      setNotificationSound(prev => ({
+          ...prev,
+          customSounds: (prev.customSounds || []).filter(s => s.id !== id),
+          selectedId: prev.selectedId === id ? 'ding' : prev.selectedId
+      }));
   };
 
   // --- Sidebar DnD Logic ---
@@ -412,6 +449,95 @@ const SettingsView = () => {
                            {['#14b8a6', '#3b82f6', '#8b5cf6', '#ef4444', '#f59e0b'].map(c => (
                                <button key={c} className="w-8 h-8 rounded-full shadow-sm" style={{backgroundColor: c}}></button>
                            ))}
+                       </div>
+                   </div>
+               </div>
+
+               {/* --- Chat Notification Sound --- */}
+               <div className="bg-white dark:bg-slate-800 rounded-2xl border border-gray-100 dark:border-slate-700 p-6 space-y-5">
+                   <div className="flex items-center justify-between">
+                       <div className="flex items-center gap-3">
+                           <div className="w-10 h-10 rounded-xl bg-primary-50 dark:bg-slate-700 text-primary-600 dark:text-primary-300 flex items-center justify-center">
+                               <Music size={20}/>
+                           </div>
+                           <div>
+                               <h3 className="font-bold">صدای اعلان چت</h3>
+                               <p className="text-sm text-gray-500">صدایی که هنگام ارسال پیام پخش می‌شود</p>
+                           </div>
+                       </div>
+                       <div className="flex items-center gap-3">
+                           <button onClick={handleSaveSettings} className="bg-primary-600 text-white px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-bold shadow-lg shadow-primary-500/20 active:scale-95 transition"><Save size={16}/> ذخیره</button>
+                           {/* On/Off toggle */}
+                           <button
+                               onClick={() => setNotificationSound(prev => ({ ...prev, enabled: !prev.enabled }))}
+                               className={`relative w-12 h-7 rounded-full transition-colors ${notificationSound.enabled ? 'bg-primary-500' : 'bg-gray-300 dark:bg-slate-600'}`}
+                               title={notificationSound.enabled ? 'فعال' : 'غیرفعال'}
+                           >
+                               <span className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow transition-all flex items-center justify-center ${notificationSound.enabled ? 'right-1' : 'right-6'}`}>
+                                   {notificationSound.enabled ? <Volume2 size={11} className="text-primary-600"/> : <VolumeX size={11} className="text-gray-400"/>}
+                               </span>
+                           </button>
+                       </div>
+                   </div>
+
+                   <div className={`${notificationSound.enabled ? '' : 'opacity-50 pointer-events-none'} transition-opacity space-y-5`}>
+                       {/* Sound choices grid */}
+                       <div>
+                           <label className="block text-sm font-bold mb-2 text-gray-700 dark:text-gray-300">انتخاب صدا</label>
+                           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                               {/* Built-in sounds */}
+                               {BUILTIN_SOUNDS.map(s => {
+                                   const isSel = notificationSound.selectedId === s.id;
+                                   return (
+                                       <button
+                                           key={s.id}
+                                           onClick={() => { setNotificationSound(prev => ({ ...prev, selectedId: s.id })); previewSound(s.id, notificationSound.volume ?? 0.6, notificationSound.customSounds); }}
+                                           className={`flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border text-sm font-bold transition active:scale-95 ${isSel ? 'bg-primary-50 dark:bg-primary-900/20 border-primary-300 dark:border-primary-700 text-primary-700 dark:text-primary-300' : 'bg-gray-50 dark:bg-slate-900 border-gray-200 dark:border-slate-700 text-gray-600 dark:text-gray-300 hover:border-primary-200'}`}
+                                       >
+                                           <span className="flex items-center gap-2"><Play size={13}/> {s.name}</span>
+                                           {isSel && <CheckCircle size={15} className="text-primary-500"/>}
+                                       </button>
+                                   );
+                               })}
+                               {/* Custom sounds */}
+                               {(notificationSound.customSounds || []).map(s => {
+                                   const isSel = notificationSound.selectedId === s.id;
+                                   return (
+                                       <div
+                                           key={s.id}
+                                           className={`flex items-center justify-between gap-1 px-3 py-2.5 rounded-xl border text-sm font-bold transition ${isSel ? 'bg-primary-50 dark:bg-primary-900/20 border-primary-300 dark:border-primary-700 text-primary-700 dark:text-primary-300' : 'bg-gray-50 dark:bg-slate-900 border-gray-200 dark:border-slate-700 text-gray-600 dark:text-gray-300'}`}
+                                       >
+                                           <button onClick={() => { setNotificationSound(prev => ({ ...prev, selectedId: s.id })); previewSound(s.id, notificationSound.volume ?? 0.6, notificationSound.customSounds); }} className="flex items-center gap-2 flex-1 min-w-0 active:scale-95 transition">
+                                               <Play size={13} className="shrink-0"/> <span className="truncate">{s.name}</span>
+                                           </button>
+                                           <button onClick={() => handleRemoveSound(s.id)} className="text-gray-400 hover:text-red-500 transition shrink-0" title="حذف"><Trash2 size={14}/></button>
+                                       </div>
+                                   );
+                               })}
+                               {/* Upload new */}
+                               <button
+                                   onClick={() => soundFileRef.current?.click()}
+                                   className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border-2 border-dashed border-gray-300 dark:border-slate-600 text-gray-500 hover:text-primary-600 hover:border-primary-300 text-sm font-bold transition active:scale-95"
+                               >
+                                   <Upload size={14}/> افزودن صدا
+                               </button>
+                               <input ref={soundFileRef} type="file" accept="audio/*" className="hidden" onChange={handleUploadSound}/>
+                           </div>
+                       </div>
+
+                       {/* Volume */}
+                       <div>
+                           <label className="block text-sm font-bold mb-2 text-gray-700 dark:text-gray-300">بلندی صدا: {toPersianDigits(Math.round((notificationSound.volume ?? 0.6) * 100))}٪</label>
+                           <div className="flex items-center gap-3">
+                               <VolumeX size={18} className="text-gray-400 shrink-0"/>
+                               <input
+                                   type="range" min={0} max={1} step={0.05}
+                                   value={notificationSound.volume ?? 0.6}
+                                   onChange={e => setNotificationSound(prev => ({ ...prev, volume: Number(e.target.value) }))}
+                                   className="flex-1 accent-primary-500 cursor-pointer"
+                               />
+                               <Volume2 size={18} className="text-gray-400 shrink-0"/>
+                           </div>
                        </div>
                    </div>
                </div>

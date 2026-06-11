@@ -3,11 +3,12 @@ import React, { useState, useEffect, useContext, useRef } from 'react';
 import { api } from '../services/db';
 import { AuthContext } from '../AuthContext';
 import { User, Message, ChatThread } from '../types';
-import { Send, Image as ImageIcon, Mic, MoreVertical, Search, Phone, Video, MessageSquare, Users, Megaphone, Trash2, Lock, Globe, Plus, X, Edit2, Check } from 'lucide-react';
+import { Send, Image as ImageIcon, Mic, MoreVertical, Search, Phone, Video, MessageSquare, Users, Megaphone, Trash2, Lock, Globe, Plus, X, Edit2, Check, Download, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 import { formatJalaliShort, toPersianDigits } from '../utils';
+import { playNotificationSound } from '../services/sound';
 
 const MessagesView = () => {
-  const { user, confirmAction } = useContext(AuthContext);
+  const { user, confirmAction, settings } = useContext(AuthContext);
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
@@ -37,6 +38,52 @@ const MessagesView = () => {
 
   // Scroll anchor
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Image lightbox (popup viewer with zoom/pan/download)
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const panState = useRef<{ dragging: boolean; startX: number; startY: number; originX: number; originY: number }>({ dragging: false, startX: 0, startY: 0, originX: 0, originY: 0 });
+
+  const openLightbox = (src: string) => { setLightboxSrc(src); setZoom(1); setPan({ x: 0, y: 0 }); };
+  const closeLightbox = () => { setLightboxSrc(null); setZoom(1); setPan({ x: 0, y: 0 }); };
+  const zoomIn = () => setZoom(z => Math.min(5, +(z + 0.25).toFixed(2)));
+  const zoomOut = () => setZoom(z => Math.max(0.5, +(z - 0.25).toFixed(2)));
+  const resetZoom = () => { setZoom(1); setPan({ x: 0, y: 0 }); };
+  const downloadImage = (src: string) => {
+      const a = document.createElement('a');
+      a.href = src;
+      a.download = `chat-image-${Date.now()}.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+  };
+
+  // Close lightbox with Escape, zoom with +/-
+  useEffect(() => {
+      if (!lightboxSrc) return;
+      const onKey = (e: KeyboardEvent) => {
+          if (e.key === 'Escape') closeLightbox();
+          else if (e.key === '+' || e.key === '=') zoomIn();
+          else if (e.key === '-') zoomOut();
+      };
+      window.addEventListener('keydown', onKey);
+      return () => window.removeEventListener('keydown', onKey);
+  }, [lightboxSrc]);
+
+  const onLightboxWheel = (e: React.WheelEvent) => {
+      e.preventDefault();
+      if (e.deltaY < 0) zoomIn(); else zoomOut();
+  };
+  const onPanStart = (e: React.MouseEvent) => {
+      if (zoom <= 1) return;
+      panState.current = { dragging: true, startX: e.clientX, startY: e.clientY, originX: pan.x, originY: pan.y };
+  };
+  const onPanMove = (e: React.MouseEvent) => {
+      if (!panState.current.dragging) return;
+      setPan({ x: panState.current.originX + (e.clientX - panState.current.startX), y: panState.current.originY + (e.clientY - panState.current.startY) });
+  };
+  const onPanEnd = () => { panState.current.dragging = false; };
 
   const refreshUnread = () => {
       if (user) setUnreadMap(api.messages.getUnreadPerThread(user.id));
@@ -97,6 +144,9 @@ const MessagesView = () => {
       };
       await api.messages.sendMessage(msg);
       setMessages(prev => [...prev, msg]);
+
+      // Notification sound on send
+      playNotificationSound(settings?.notificationSound);
 
       // Sidebar preview text based on type
       const preview = type === 'text' ? content : type === 'image' ? '🖼️ تصویر' : type === 'voice' ? '🎤 پیام صوتی' : content;
@@ -372,7 +422,7 @@ const MessagesView = () => {
                         </div>
                     </div>
 
-                    <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/50 dark:bg-slate-900/50 custom-scrollbar">
+                    <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50/50 dark:bg-slate-900/50 custom-scrollbar">
                         {(() => {
                             const activeThread = threads.find(t => t.id === activeThreadId);
                             const isGroupChat = activeThread?.type === 'group' || activeThread?.type === 'broadcast';
@@ -381,55 +431,76 @@ const MessagesView = () => {
                                 const sender = users.find(u => u.id === msg.senderId);
                                 const senderName = sender ? `${sender.firstName} ${sender.lastName}` : 'کاربر';
                                 const isEditing = editingMsgId === msg.id;
+                                const isMedia = msg.type === 'image';
                                 return (
-                                <div key={msg.id} className={`flex ${isMine ? 'justify-end' : 'justify-start'} group`}>
-                                    {/* Edit/Delete actions (own text messages) */}
+                                <div
+                                    key={msg.id}
+                                    className={`flex items-end gap-1.5 ${isMine ? 'justify-end' : 'justify-start'} group animate-in fade-in ${isMine ? 'slide-in-from-bottom-2 slide-in-from-left-2' : 'slide-in-from-bottom-2 slide-in-from-right-2'} duration-300`}
+                                >
+                                    {/* Edit/Delete actions (own messages) */}
                                     {isMine && !isEditing && (
-                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition self-center ml-1">
+                                        <div className="flex items-center gap-1 opacity-0 translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200 self-center">
                                             {msg.type === 'text' && (
-                                                <button onClick={() => startEditMessage(msg)} className="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-slate-700 rounded-lg transition" title="ویرایش"><Edit2 size={13}/></button>
+                                                <button onClick={() => startEditMessage(msg)} className="p-1.5 text-gray-400 hover:text-blue-500 bg-white dark:bg-slate-700 hover:bg-blue-50 dark:hover:bg-slate-600 rounded-lg transition shadow-sm active:scale-90" title="ویرایش"><Edit2 size={13}/></button>
                                             )}
-                                            <button onClick={() => handleDeleteMessage(msg.id)} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-slate-700 rounded-lg transition" title="حذف"><Trash2 size={13}/></button>
+                                            <button onClick={() => handleDeleteMessage(msg.id)} className="p-1.5 text-gray-400 hover:text-red-500 bg-white dark:bg-slate-700 hover:bg-red-50 dark:hover:bg-slate-600 rounded-lg transition shadow-sm active:scale-90" title="حذف"><Trash2 size={13}/></button>
                                         </div>
                                     )}
-                                    <div className={`max-w-[70%] p-3 rounded-2xl text-sm ${isMine ? 'bg-primary-500 text-white rounded-tl-none' : 'bg-white dark:bg-slate-700 text-gray-800 dark:text-gray-100 rounded-tr-none shadow-sm'}`}>
-                                        {/* Sender name for incoming group messages (feature 3) */}
+                                    <div className={`max-w-[72%] text-sm shadow-sm transition-all duration-200 group-hover:shadow-md
+                                        ${isMedia ? 'p-1.5' : 'px-3.5 py-2.5'}
+                                        ${isMine
+                                            ? 'bg-gradient-to-br from-primary-500 to-primary-600 text-white rounded-2xl rounded-bl-md'
+                                            : 'bg-white dark:bg-slate-700 text-gray-800 dark:text-gray-100 rounded-2xl rounded-br-md border border-gray-100 dark:border-slate-600'}`}
+                                    >
+                                        {/* Sender name for incoming group messages */}
                                         {!isMine && isGroupChat && (
-                                            <div className="text-[11px] font-black text-primary-500 dark:text-primary-300 mb-1">{senderName}</div>
+                                            <div className={`text-[11px] font-black text-primary-500 dark:text-primary-300 mb-1 ${isMedia ? 'px-2 pt-1' : ''}`}>{senderName}</div>
                                         )}
 
                                         {isEditing ? (
-                                            <div className="flex flex-col gap-2 min-w-[200px]">
+                                            <div className="flex flex-col gap-2 min-w-[210px]">
                                                 <input
                                                     autoFocus
                                                     value={editText}
                                                     onChange={e => setEditText(e.target.value)}
                                                     onKeyDown={e => { if (e.key === 'Enter') saveEditMessage(); if (e.key === 'Escape') { setEditingMsgId(null); setEditText(''); } }}
-                                                    className="bg-white/20 text-white placeholder:text-white/60 outline-none px-2 py-1.5 rounded-lg text-sm border border-white/30"
+                                                    className="bg-white/15 text-white placeholder:text-white/60 outline-none px-3 py-2 rounded-xl text-sm border border-white/30 focus:border-white/60 transition"
                                                 />
                                                 <div className="flex gap-2 justify-end">
-                                                    <button onClick={() => { setEditingMsgId(null); setEditText(''); }} className="p-1 bg-white/20 rounded-md hover:bg-white/30 transition"><X size={14}/></button>
-                                                    <button onClick={saveEditMessage} className="p-1 bg-white/30 rounded-md hover:bg-white/40 transition"><Check size={14}/></button>
+                                                    <button onClick={() => { setEditingMsgId(null); setEditText(''); }} className="px-2.5 py-1 bg-white/15 rounded-lg hover:bg-white/25 transition text-xs font-bold flex items-center gap-1 active:scale-95"><X size={13}/> لغو</button>
+                                                    <button onClick={saveEditMessage} className="px-2.5 py-1 bg-white/25 rounded-lg hover:bg-white/35 transition text-xs font-bold flex items-center gap-1 active:scale-95"><Check size={13}/> ذخیره</button>
                                                 </div>
                                             </div>
                                         ) : (
                                             <>
-                                                {/* Content by type (features 4 & 6) */}
+                                                {/* Content by type */}
                                                 {msg.type === 'image' ? (
-                                                    <img src={msg.content} alt="تصویر" className="max-w-full rounded-lg cursor-pointer max-h-64 object-cover" onClick={() => window.open(msg.content, '_blank')}/>
+                                                    <div className="relative overflow-hidden rounded-xl group/img cursor-zoom-in" onClick={() => openLightbox(msg.content)}>
+                                                        <img src={msg.content} alt="تصویر" className="max-w-full rounded-xl max-h-72 object-cover transition-transform duration-300 group-hover/img:scale-[1.03]"/>
+                                                        <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/10 transition-colors flex items-center justify-center">
+                                                            <div className="opacity-0 group-hover/img:opacity-100 transition-opacity bg-black/50 text-white rounded-full p-2 backdrop-blur-sm">
+                                                                <ZoomIn size={18}/>
+                                                            </div>
+                                                        </div>
+                                                    </div>
                                                 ) : msg.type === 'voice' ? (
-                                                    <audio controls src={msg.content} className="max-w-[220px] h-10"/>
+                                                    <div className={`flex items-center gap-2 rounded-xl p-1 ${isMine ? 'bg-white/10' : 'bg-gray-50 dark:bg-slate-600/40'}`}>
+                                                        <div className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center ${isMine ? 'bg-white/25 text-white' : 'bg-primary-100 dark:bg-slate-500 text-primary-600 dark:text-primary-200'}`}>
+                                                            <Mic size={16}/>
+                                                        </div>
+                                                        <audio controls src={msg.content} className="h-9 max-w-[200px]"/>
+                                                    </div>
                                                 ) : (
-                                                    <span className="whitespace-pre-wrap break-words">{msg.content}</span>
+                                                    <span className="whitespace-pre-wrap break-words leading-relaxed">{msg.content}</span>
                                                 )}
                                             </>
                                         )}
 
-                                        <div className={`text-[10px] mt-1 text-right flex items-center justify-end gap-1 ${isMine ? 'text-primary-100' : 'text-gray-400'}`}>
+                                        <div className={`text-[10px] mt-1 flex items-center justify-end gap-1 ${isMedia ? 'px-2 pb-1' : ''} ${isMine ? 'text-primary-100' : 'text-gray-400'}`}>
                                             {msg.isEdited && <span className="opacity-70">(ویرایش‌شده)</span>}
                                             {new Date(msg.createdAt).toLocaleTimeString('fa-IR', {hour:'2-digit', minute:'2-digit'})}
                                             {isMine && (
-                                                <span>{msg.isSeen ? '✓✓' : '✓'}</span>
+                                                <span className="font-bold">{msg.isSeen ? '✓✓' : '✓'}</span>
                                             )}
                                         </div>
                                     </div>
@@ -441,39 +512,43 @@ const MessagesView = () => {
                     </div>
 
                     {/* Input Area */}
-                    <div className="p-4 bg-white dark:bg-slate-800 border-t border-gray-100 dark:border-slate-700">
+                    <div className="p-3 bg-white dark:bg-slate-800 border-t border-gray-100 dark:border-slate-700">
                         {isRecording ? (
-                            <div className="flex items-center gap-3 bg-red-50 dark:bg-red-900/20 px-4 py-3 rounded-xl border border-red-100 dark:border-red-800 animate-in fade-in">
-                                <span className="relative flex h-3 w-3">
+                            <div className="flex items-center gap-3 bg-red-50 dark:bg-red-900/20 px-4 py-2.5 rounded-2xl border border-red-100 dark:border-red-800 animate-in fade-in slide-in-from-bottom-2 duration-200">
+                                <span className="relative flex h-3 w-3 shrink-0">
                                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
                                     <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
                                 </span>
-                                <span className="flex-1 text-sm font-bold text-red-600 dark:text-red-400">در حال ضبط... {formatRecordTime(recordSeconds)}</span>
-                                <button onClick={() => stopRecording(true)} className="p-2 text-gray-500 hover:text-red-500 hover:bg-white dark:hover:bg-slate-800 rounded-lg transition" title="لغو">
+                                <span className="flex-1 text-sm font-bold text-red-600 dark:text-red-400">در حال ضبط صدا... <span className="tabular-nums">{formatRecordTime(recordSeconds)}</span></span>
+                                <button onClick={() => stopRecording(true)} className="p-2 text-gray-500 hover:text-red-500 hover:bg-white dark:hover:bg-slate-800 rounded-xl transition active:scale-90" title="لغو ضبط">
                                     <Trash2 size={18}/>
                                 </button>
-                                <button onClick={() => stopRecording(false)} className="p-2.5 bg-primary-600 text-white rounded-xl hover:bg-primary-700 transition shadow-lg shadow-primary-500/30" title="ارسال صدا">
+                                <button onClick={() => stopRecording(false)} className="p-2.5 bg-primary-600 text-white rounded-xl hover:bg-primary-700 transition shadow-lg shadow-primary-500/30 active:scale-90" title="ارسال صدا">
                                     <Send size={18} className="rotate-180"/>
                                 </button>
                             </div>
                         ) : (
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5 bg-gray-100 dark:bg-slate-900 rounded-2xl p-1.5 transition focus-within:ring-2 focus-within:ring-primary-500/20">
                                 <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageInput}/>
-                                <button onClick={() => fileInputRef.current?.click()} className="p-3 text-gray-400 hover:text-primary-600 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-xl transition" title="ارسال تصویر">
+                                <button onClick={() => fileInputRef.current?.click()} className="p-2.5 text-gray-400 hover:text-primary-600 hover:bg-white dark:hover:bg-slate-700 rounded-xl transition active:scale-90" title="ارسال تصویر">
                                     <ImageIcon size={20}/>
                                 </button>
-                                <button onClick={startRecording} className="p-3 text-gray-400 hover:text-primary-600 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-xl transition" title="ضبط صدا">
+                                <button onClick={startRecording} className="p-2.5 text-gray-400 hover:text-primary-600 hover:bg-white dark:hover:bg-slate-700 rounded-xl transition active:scale-90" title="ضبط صدا">
                                     <Mic size={20}/>
                                 </button>
                                 <input
-                                    className="flex-1 bg-gray-100 dark:bg-slate-900 border-none outline-none px-4 py-3 rounded-xl text-sm"
+                                    className="flex-1 bg-transparent border-none outline-none px-2 py-2 text-sm"
                                     placeholder="پیام خود را بنویسید... (یا تصویر را Paste کنید)"
                                     value={inputMsg}
                                     onChange={e => setInputMsg(e.target.value)}
                                     onKeyDown={e => e.key === 'Enter' && handleSend()}
                                     onPaste={handlePaste}
                                 />
-                                <button onClick={handleSend} className="p-3 bg-primary-600 text-white rounded-xl hover:bg-primary-700 transition shadow-lg shadow-primary-500/30">
+                                <button
+                                    onClick={handleSend}
+                                    disabled={!inputMsg.trim()}
+                                    className="p-2.5 bg-primary-600 text-white rounded-xl hover:bg-primary-700 transition shadow-lg shadow-primary-500/30 active:scale-90 disabled:opacity-40 disabled:shadow-none disabled:cursor-not-allowed disabled:active:scale-100"
+                                >
                                     <Send size={18} className="rotate-180"/>
                                 </button>
                             </div>
@@ -535,6 +610,51 @@ const MessagesView = () => {
                         )}
                     </div>
                 </div>
+            </div>
+        )}
+
+        {/* Image Lightbox (popup viewer with zoom / pan / download) */}
+        {lightboxSrc && (
+            <div
+                className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex flex-col animate-in fade-in duration-200"
+                onClick={closeLightbox}
+            >
+                {/* Toolbar */}
+                <div
+                    className="flex items-center justify-between p-4 text-white animate-in slide-in-from-top-2 duration-300"
+                    onClick={e => e.stopPropagation()}
+                >
+                    <span className="text-sm font-bold bg-white/10 px-3 py-1.5 rounded-full">{toPersianDigits(Math.round(zoom * 100))}٪</span>
+                    <div className="flex items-center gap-2">
+                        <button onClick={zoomOut} className="p-2.5 bg-white/10 hover:bg-white/20 rounded-xl transition active:scale-90" title="کوچک‌نمایی"><ZoomOut size={20}/></button>
+                        <button onClick={zoomIn} className="p-2.5 bg-white/10 hover:bg-white/20 rounded-xl transition active:scale-90" title="بزرگ‌نمایی"><ZoomIn size={20}/></button>
+                        <button onClick={resetZoom} className="p-2.5 bg-white/10 hover:bg-white/20 rounded-xl transition active:scale-90" title="بازنشانی"><RotateCcw size={18}/></button>
+                        <button onClick={() => downloadImage(lightboxSrc)} className="p-2.5 bg-white/10 hover:bg-white/20 rounded-xl transition active:scale-90" title="دانلود"><Download size={20}/></button>
+                        <div className="w-px h-6 bg-white/20 mx-1"></div>
+                        <button onClick={closeLightbox} className="p-2.5 bg-white/10 hover:bg-red-500/80 rounded-xl transition active:scale-90" title="بستن (Esc)"><X size={20}/></button>
+                    </div>
+                </div>
+
+                {/* Image canvas */}
+                <div
+                    className="flex-1 flex items-center justify-center overflow-hidden select-none"
+                    onClick={e => e.stopPropagation()}
+                    onWheel={onLightboxWheel}
+                    onMouseDown={onPanStart}
+                    onMouseMove={onPanMove}
+                    onMouseUp={onPanEnd}
+                    onMouseLeave={onPanEnd}
+                    style={{ cursor: zoom > 1 ? (panState.current.dragging ? 'grabbing' : 'grab') : 'default' }}
+                >
+                    <img
+                        src={lightboxSrc}
+                        alt="نمایش تصویر"
+                        draggable={false}
+                        className="max-w-[92vw] max-h-[80vh] object-contain rounded-lg shadow-2xl animate-in zoom-in-95 duration-300"
+                        style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transition: panState.current.dragging ? 'none' : 'transform 0.15s ease-out' }}
+                    />
+                </div>
+                <p className="text-center text-white/40 text-xs pb-4">برای بستن کلیک کنید یا Esc بزنید — اسکرول برای زوم</p>
             </div>
         )}
     </div>

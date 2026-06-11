@@ -488,6 +488,13 @@ export interface AppSettings {
   backup?: {
       lastBackupDate?: string;
   };
+  // Chat notification sound config
+  notificationSound?: {
+      enabled: boolean;
+      selectedId: string; // built-in id (e.g. 'ding') or a custom sound id
+      volume?: number; // 0..1
+      customSounds?: { id: string; name: string; dataUrl: string }[];
+  };
 }
 
 // --- TOAST TYPES ---
