@@ -4,7 +4,7 @@ import { api } from '../services/db';
 import { AuthContext } from '../AuthContext';
 import { User, Message, ChatThread } from '../types';
 import { Send, Image as ImageIcon, Mic, MoreVertical, Search, Phone, Video, MessageSquare, Users, Megaphone, Trash2, Lock, Globe, Plus, X, Edit2, Check, Download, ZoomIn, ZoomOut, RotateCcw, Play, Pause } from 'lucide-react';
-import { formatJalaliShort, toPersianDigits } from '../utils';
+import { formatJalaliShort, toPersianDigits, getRelativeDateLabel } from '../utils';
 import { playNotificationSound } from '../services/sound';
 
 // Custom audio player for voice messages — matches the design system (no default browser UI)
@@ -90,6 +90,10 @@ const MessagesView = () => {
   // Per-thread unread counts (feature 3)
   const [unreadMap, setUnreadMap] = useState<Record<string, number>>({});
 
+  // Presence map (userId -> last-seen ISO) for real online/last-seen status
+  const [presence, setPresence] = useState<Record<string, string>>({});
+  const ONLINE_THRESHOLD_MS = 90 * 1000; // online if seen within 90s
+
   // Edit message state (feature 3)
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
@@ -162,6 +166,7 @@ const MessagesView = () => {
       const u = await api.users.getAll();
       setThreads(t.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()));
       setUsers(u);
+      setPresence(api.presence.getAll());
       refreshUnread();
   };
 
@@ -173,15 +178,19 @@ const MessagesView = () => {
   useEffect(() => {
       const handleSync = () => {
           loadThreads();
+          setPresence(api.presence.getAll());
           if (activeThreadId) {
               api.messages.getMessages(activeThreadId).then(setMessages);
           }
       };
       window.addEventListener('xrm-data-synced', handleSync);
       window.addEventListener('messagesUpdated', handleSync);
+      // Re-evaluate online status every 20s even without new data
+      const presenceTick = setInterval(() => setPresence(api.presence.getAll()), 20000);
       return () => {
           window.removeEventListener('xrm-data-synced', handleSync);
           window.removeEventListener('messagesUpdated', handleSync);
+          clearInterval(presenceTick);
       };
   }, [activeThreadId]);
 
@@ -394,6 +403,23 @@ const MessagesView = () => {
       return u ? `${u.firstName} ${u.lastName}` : 'کاربر ناشناس';
   };
 
+  // The "other" participant of a direct thread
+  const getOtherUser = (thread: ChatThread): User | undefined => {
+      if (thread.type === 'group' || thread.type === 'broadcast') return undefined;
+      const otherId = thread.participants.find(p => p !== user!.id);
+      return users.find(usr => usr.id === otherId);
+  };
+
+  // Real online / last-seen status for a user (presence heartbeat + lastLoginAt)
+  const getPresenceInfo = (u?: User): { online: boolean; lastSeen: Date | null } => {
+      if (!u) return { online: false, lastSeen: null };
+      const pres = presence[u.id] ? new Date(presence[u.id]).getTime() : 0;
+      const login = u.lastLoginAt ? new Date(u.lastLoginAt).getTime() : 0;
+      const lastTs = Math.max(pres, login);
+      const online = pres > 0 && (Date.now() - pres) < ONLINE_THRESHOLD_MS;
+      return { online, lastSeen: lastTs > 0 ? new Date(lastTs) : null };
+  };
+
   return (
     <div className="flex h-[calc(100vh-8rem)] gap-6">
         {/* Sidebar List */}
@@ -434,6 +460,9 @@ const MessagesView = () => {
                     const hasUnread = unread > 0 && !isActive;
                     const isBroadcast = t.type === 'broadcast';
                     const isGroup = t.type === 'group' || isBroadcast;
+                    const otherUser = getOtherUser(t);
+                    const avatarUrl = otherUser?.avatarUrl;
+                    const { online } = getPresenceInfo(otherUser);
                     return (
                     <div
                         key={t.id}
@@ -441,9 +470,15 @@ const MessagesView = () => {
                         className={`p-2.5 flex items-center gap-3 cursor-pointer rounded-2xl transition-all duration-200 group relative active:scale-[0.98] ${isActive ? 'bg-primary-50 dark:bg-primary-900/20 shadow-sm' : 'hover:bg-gray-50 dark:hover:bg-slate-700/50'}`}
                     >
                         <div className="relative w-12 h-12 shrink-0">
-                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg overflow-hidden shadow-sm transition-transform group-hover:scale-105 ${isGroup ? 'bg-gradient-to-tr from-blue-500 to-indigo-400 text-white' : 'bg-gradient-to-tr from-primary-500 to-primary-300 text-white'}`}>
-                                {isBroadcast ? <Megaphone size={20}/> : getThreadName(t)[0]}
+                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg overflow-hidden shadow-sm transition-transform group-hover:scale-105 ${isGroup ? 'bg-gradient-to-tr from-blue-500 to-indigo-400 text-white' : 'bg-gradient-to-tr from-brand to-primary-300 text-white'}`}>
+                                {avatarUrl ? (
+                                    <img src={avatarUrl} alt="" className="w-full h-full object-cover"/>
+                                ) : isBroadcast ? <Megaphone size={20}/> : getThreadName(t)[0]}
                             </div>
+                            {/* Online dot (real presence) */}
+                            {!isGroup && online && (
+                                <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-emerald-500 rounded-full border-2 border-white dark:border-slate-800 shadow-sm" title="آنلاین"></span>
+                            )}
                             {hasUnread && (
                                 <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center border-2 border-white dark:border-slate-800 shadow animate-in zoom-in">
                                     {toPersianDigits(unread > 99 ? '99+' : unread)}
@@ -483,17 +518,41 @@ const MessagesView = () => {
         <div className="flex-1 bg-white dark:bg-slate-800 rounded-2xl border border-gray-100 dark:border-slate-700 flex flex-col overflow-hidden">
             {activeThreadId ? (
                 <>
-                    <div className="p-4 border-b border-gray-100 dark:border-slate-700 flex justify-between items-center bg-white dark:bg-slate-800 z-10 shadow-sm">
-                        <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center font-bold">
-                                {getThreadName(threads.find(t=>t.id === activeThreadId)!)[0]}
-                            </div>
-                            <div>
-                                <h3 className="font-bold text-gray-800 dark:text-white">{getThreadName(threads.find(t=>t.id === activeThreadId)!)}</h3>
-                                <span className="text-xs text-green-500">آنلاین</span>
+                    {(() => {
+                        const activeThread = threads.find(t => t.id === activeThreadId)!;
+                        const headerIsGroup = activeThread.type === 'group' || activeThread.type === 'broadcast';
+                        const headerOther = getOtherUser(activeThread);
+                        const headerAvatar = headerOther?.avatarUrl;
+                        const { online: headerOnline, lastSeen: headerLastSeen } = getPresenceInfo(headerOther);
+                        return (
+                        <div className="p-4 border-b border-gray-100 dark:border-slate-700 flex justify-between items-center bg-white dark:bg-slate-800 z-10 shadow-sm">
+                            <div className="flex items-center gap-3">
+                                <div className="relative w-10 h-10 shrink-0">
+                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold overflow-hidden ${headerIsGroup ? 'bg-gradient-to-tr from-blue-500 to-indigo-400 text-white' : 'bg-gradient-to-tr from-brand to-primary-300 text-white'}`}>
+                                        {headerAvatar ? <img src={headerAvatar} alt="" className="w-full h-full object-cover"/> : getThreadName(activeThread)[0]}
+                                    </div>
+                                    {!headerIsGroup && headerOnline && (
+                                        <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 rounded-full border-2 border-white dark:border-slate-800"></span>
+                                    )}
+                                </div>
+                                <div>
+                                    <h3 className="font-bold text-gray-800 dark:text-white">{getThreadName(activeThread)}</h3>
+                                    {headerIsGroup ? (
+                                        <span className="text-xs text-gray-400">{toPersianDigits(activeThread.participants.length)} عضو</span>
+                                    ) : headerOnline ? (
+                                        <span className="text-xs text-emerald-500 flex items-center gap-1">
+                                            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full inline-block"></span> آنلاین
+                                        </span>
+                                    ) : headerLastSeen ? (
+                                        <span className="text-xs text-gray-400">آخرین بازدید: {toPersianDigits(getRelativeDateLabel(headerLastSeen))}</span>
+                                    ) : (
+                                        <span className="text-xs text-gray-400">آفلاین</span>
+                                    )}
+                                </div>
                             </div>
                         </div>
-                    </div>
+                        );
+                    })()}
 
                     <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50/50 dark:bg-slate-900/50 custom-scrollbar">
                         {(() => {

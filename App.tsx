@@ -150,7 +150,7 @@ const Sidebar = ({ user, settings, unreadMessages, isSidebarOpen, setIsSidebarOp
                 <img src={settings.dashboardLogoUrl} alt="logo" className="w-full h-full object-contain"/>
               </div>
             ) : (
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-primary-500 to-primary-300 flex items-center justify-center text-white font-bold shadow-md">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand to-primary-300 flex items-center justify-center text-white font-bold shadow-md">
                 X
               </div>
             )}
@@ -167,7 +167,7 @@ const Sidebar = ({ user, settings, unreadMessages, isSidebarOpen, setIsSidebarOp
               <img src={settings.dashboardLogoUrl} alt="logo" className="w-full h-full object-contain"/>
             </div>
           ) : (
-            <div className="w-10 h-10 min-h-[40px] rounded-xl bg-gradient-to-tr from-primary-500 to-primary-300 flex flex-shrink-0 items-center justify-center text-white font-bold shadow-md">
+            <div className="w-10 h-10 min-h-[40px] rounded-xl bg-gradient-to-tr from-brand to-primary-300 flex flex-shrink-0 items-center justify-center text-white font-bold shadow-md">
               X
             </div>
           )
@@ -808,6 +808,18 @@ const App = () => {
     }, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  // Presence heartbeat — marks the current user as online while the app is open
+  useEffect(() => {
+    if (!user) return;
+    api.presence.heartbeat(user.id); // immediate
+    const hb = setInterval(() => {
+      if (document.visibilityState === 'visible') api.presence.heartbeat(user.id);
+    }, 25000);
+    const onVisible = () => { if (document.visibilityState === 'visible') api.presence.heartbeat(user.id); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { clearInterval(hb); document.removeEventListener('visibilitychange', onVisible); };
+  }, [user]);
 
   const refreshSettings = async () => {
       const s = await api.settings.get();

@@ -19,7 +19,8 @@ const KEYS = {
   NOTIFICATIONS: 'xrm_notifications',
   BROADCASTS: 'xrm_broadcasts',
   CATEGORIES: 'xrm_transaction_categories',
-  CURRENT_USER: 'xrm_current_user'
+  CURRENT_USER: 'xrm_current_user',
+  PRESENCE: 'xrm_presence'
 };
 
 // ... (InitDB and other helpers remain unchanged) ...
@@ -221,9 +222,26 @@ export const api = {
          return Array.isArray(parsed) ? parsed[0] : parsed;
      },
      update: async (settings: AppSettings, userId: string) => {
-         localStorage.setItem(KEYS.SETTINGS, JSON.stringify(settings));
+         // Use saveItems so settings are pushed to Supabase WITH a fresh sync
+         // timestamp — otherwise the 5s sync pulls stale settings and reverts changes.
+         await saveItems(KEYS.SETTINGS, settings as any);
          api.logs.add(userId, 'UPDATE_SETTINGS', 'بروزرسانی تنظیمات سیستم');
      }
+  },
+  presence: {
+      // Map of userId -> last-seen ISO timestamp. Lightweight, merged on write.
+      getAll: (): Record<string, string> => {
+          const str = localStorage.getItem(KEYS.PRESENCE);
+          if (!str) return {};
+          try { const p = JSON.parse(str); return (p && typeof p === 'object' && !Array.isArray(p)) ? p : {}; }
+          catch { return {}; }
+      },
+      heartbeat: async (userId: string) => {
+          if (!userId) return;
+          const current = api.presence.getAll();
+          current[userId] = new Date().toISOString();
+          await saveItems(KEYS.PRESENCE, current as any);
+      }
   },
   users: {
     getAll: async () => { await delay(); return getItems<User>(KEYS.USERS).filter(u => u.status !== UserStatus.Deleted); },
