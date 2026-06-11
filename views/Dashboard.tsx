@@ -1166,7 +1166,11 @@ const ReceivablesWidget = ({ clients, projects, invoices, transactions }: any) =
             const clientProjects = projects.filter((p: any) => p.clientId === client.id) || [];
             const clientProjectIds = clientProjects.map((p: any) => p.id);
             
-            const clientInvoices = invoices.filter((inv: any) => clientProjectIds.includes(inv.projectId));
+            // Match invoices linked via project OR directly by clientId (covers invoices
+            // created without a project or where the project doesn't carry clientId)
+            const clientInvoices = invoices.filter((inv: any) =>
+                clientProjectIds.includes(inv.projectId) || inv.clientId === client.id
+            );
             
             let cTotalInv = 0;
             let cTotalPaid = 0;
@@ -1409,7 +1413,10 @@ const AdminDashboard = ({ clients, projects, transactions, tasks, invoices, user
         return diff <= (p.deadlineWarningDays || 3) && new Date(p.deadline) >= new Date();
     });
     const overdueProjects = projects.filter((p: any) => p.status === 'Active' && p.deadline && new Date(p.deadline) < new Date());
-    const unpaidInvoices = invoices.filter((i: any) => (i.status === 'ارسال‌شده' || i.status === 'معوق') && i.finalAmount > 0);
+    const unpaidInvoices = invoices.filter((i: any) =>
+        ['ارسال‌شده', 'دیده‌شده', 'تأییدشده', 'معوق', 'خطا'].includes(i.status) &&
+        (Number(i.finalAmount) > 0 || Number(i.totalAmount) > 0)
+    );
     const fin = calculateDashboardFinancials(projects, invoices, transactions, clients);
     
     // We keep these for the chart or widget props, but pass central numbers

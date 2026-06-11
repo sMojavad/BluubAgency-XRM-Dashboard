@@ -213,18 +213,38 @@ export const api = {
   settings: {
      get: async (): Promise<AppSettings> => {
          const str = localStorage.getItem(KEYS.SETTINGS);
-         if (!str) return { 
-            themeColor: '#14b8a6', menuTitles: {}, projectTypes: [], 
-            sidebarConfig: DEFAULT_SIDEBAR_CONFIG, 
-            rolePermissions: DEFAULT_ROLE_PERMISSIONS 
+         if (!str) return {
+            themeColor: '#14b8a6', menuTitles: {}, projectTypes: [],
+            sidebarConfig: DEFAULT_SIDEBAR_CONFIG,
+            rolePermissions: DEFAULT_ROLE_PERMISSIONS
          };
          const parsed = JSON.parse(str);
-         return Array.isArray(parsed) ? parsed[0] : parsed;
+         const settings: AppSettings = Array.isArray(parsed) ? parsed[0] : parsed;
+         // Merge back logo stored in a separate local-only key (never synced to Supabase)
+         const storedLogo = localStorage.getItem('xrm_dashboard_logo');
+         if (storedLogo) settings.dashboardLogoUrl = storedLogo;
+         return settings;
      },
      update: async (settings: AppSettings, userId: string) => {
-         // Use saveItems so settings are pushed to Supabase WITH a fresh sync
-         // timestamp — otherwise the 5s sync pulls stale settings and reverts changes.
-         await saveItems(KEYS.SETTINGS, settings as any);
+         // Persist the logo in a dedicated localStorage key that is never pushed to
+         // Supabase. Without this, the base64 blob (~512 KB) makes the REST payload
+         // too large → Supabase returns 4xx → sync timestamp is never written →
+         // the next 5-second syncFromSupabase sees a "stale" local timestamp and
+         // overwrites localStorage with the old Supabase settings (without logo).
+         if (settings.dashboardLogoUrl) {
+             localStorage.setItem('xrm_dashboard_logo', settings.dashboardLogoUrl);
+         } else {
+             localStorage.removeItem('xrm_dashboard_logo');
+         }
+
+         // Build a blob-free copy to push to Supabase (keeps payload small)
+         const { dashboardLogoUrl: _logo, ...rest } = settings as any;
+         const syncable = { ...rest };
+         // Save full settings (with logo) to localStorage so local reads are complete
+         localStorage.setItem(KEYS.SETTINGS, JSON.stringify(settings));
+         // Push the stripped copy to Supabase — this will succeed and write the sync timestamp
+         await pushToSupabase(KEYS.SETTINGS, syncable as any);
+
          api.logs.add(userId, 'UPDATE_SETTINGS', 'بروزرسانی تنظیمات سیستم');
      }
   },
