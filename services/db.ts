@@ -680,6 +680,31 @@ export const api = {
               saveItems(KEYS.THREADS, items);
               api.logs.add(userId, 'DELETE_THREAD', `حذف گفتگو ${thread.name || id}`);
           }
+      },
+      deleteMessage: async (id: string, userId: string) => {
+          const items = getItems<Message>(KEYS.MESSAGES);
+          const filtered = items.filter(m => m.id !== id);
+          saveItems(KEYS.MESSAGES, filtered);
+          api.logs.add(userId, 'DELETE_MESSAGE', `حذف پیام ${id}`);
+          window.dispatchEvent(new Event('messagesUpdated'));
+      },
+      updateMessage: async (id: string, content: string) => {
+          const items = getItems<Message>(KEYS.MESSAGES);
+          const idx = items.findIndex(m => m.id === id);
+          if (idx > -1) {
+              items[idx] = { ...items[idx], content, isEdited: true };
+              saveItems(KEYS.MESSAGES, items);
+              window.dispatchEvent(new Event('messagesUpdated'));
+          }
+      },
+      getUnreadPerThread: (userId: string): Record<string, number> => {
+          const threads = getItems<ChatThread>(KEYS.THREADS).filter(t => t.participants.includes(userId));
+          const messages = getItems<Message>(KEYS.MESSAGES);
+          const result: Record<string, number> = {};
+          threads.forEach(t => {
+              result[t.id] = messages.filter(m => m.threadId === t.id && m.senderId !== userId && !m.isSeen).length;
+          });
+          return result;
       }
   },
   notifications: {

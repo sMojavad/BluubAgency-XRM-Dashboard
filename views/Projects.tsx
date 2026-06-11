@@ -5,7 +5,7 @@ import { AuthContext } from '../AuthContext';
 import { Project, ProjectStatus, Client, User, PaymentMethod, UserRole, Notification, Transaction, TransactionType, FinanceCategory, Invoice, TransactionStatus, LedgerSnapshot } from '../types';
 import { LedgerSnapshotService } from '../services/ledger';
 import { generateId, toPersianDigits, formatCurrency, formatJalali, getStatusColor, calculateShare, calculateProjectHealth, ProjectHealth, calculateProjectFinancials } from '../utils';
-import { Plus, Filter, Calendar, DollarSign, Edit, Trash, Users, Bell, TrendingUp, TrendingDown, Wallet, PieChart, FileText, Link } from 'lucide-react';
+import { Plus, Filter, Calendar, DollarSign, Edit, Trash, Users, Bell, TrendingUp, TrendingDown, Wallet, PieChart, FileText, Link, Check } from 'lucide-react';
 import { Modal, CurrencyInput, JalaliDatePicker } from '../components/Shared';
 
 const getHealthColor = (status: ProjectHealth['status']) => {
@@ -168,13 +168,20 @@ const ProjectsView = () => {
     if (!user) return;
 
     try {
-      // Update Total Budget if Invoice Linked
+      // Update Total Budget if Invoice(s) Linked
       let projectData = { ...formData } as Project;
-      if (projectData.linkedInvoiceId) {
-          const inv = invoices.find(i => i.id === projectData.linkedInvoiceId);
-          if (inv) {
-              projectData.totalBudget = inv.finalAmount;
-          }
+      const linkedIds: string[] = projectData.linkedInvoiceIds && projectData.linkedInvoiceIds.length > 0
+          ? projectData.linkedInvoiceIds
+          : (projectData.linkedInvoiceId ? [projectData.linkedInvoiceId] : []);
+      if (linkedIds.length > 0) {
+          const sum = linkedIds.reduce((acc, id) => {
+              const inv = invoices.find(i => i.id === id);
+              return acc + (inv ? inv.finalAmount : 0);
+          }, 0);
+          projectData.totalBudget = sum;
+          // Keep linkedInvoiceId in sync (first) for commission + card display compat
+          projectData.linkedInvoiceId = linkedIds[0];
+          projectData.linkedInvoiceIds = linkedIds;
       }
 
       if (formData.id) {
@@ -352,8 +359,13 @@ const ProjectsView = () => {
            const hasBudget = project.totalBudget > 0;
            const budgetProgress = hasBudget ? Math.min(100, (pnl.income / project.totalBudget) * 100) : 0;
            
-           // Find Linked Invoice Name
-           const linkedInvoice = invoices.find(i => i.id === project.linkedInvoiceId);
+           // Find Linked Invoice(s)
+           const projectLinkedIds: string[] = project.linkedInvoiceIds && project.linkedInvoiceIds.length > 0
+               ? project.linkedInvoiceIds
+               : (project.linkedInvoiceId ? [project.linkedInvoiceId] : []);
+           const linkedInvoicesList = projectLinkedIds
+               .map(lid => invoices.find(i => i.id === lid))
+               .filter((i): i is NonNullable<typeof i> => !!i);
            const health = calculateProjectHealth(project, settings);
            const financialKeywords = ['بودجه', 'هزینه'];
            const displayReasons = health.reasons.filter(r => {
@@ -386,9 +398,13 @@ const ProjectsView = () => {
               </div>
 
               <h3 className="font-bold text-lg text-gray-800 dark:text-white mb-1">{project.title}</h3>
-              {linkedInvoice && (
-                  <div className="text-[10px] text-blue-500 bg-blue-50 w-fit px-2 py-0.5 rounded-full mb-1 flex items-center gap-1">
-                      <Link size={10}/> متصل به فاکتور #{toPersianDigits(linkedInvoice.number)}
+              {linkedInvoicesList.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mb-1">
+                      {linkedInvoicesList.map(inv => (
+                          <div key={inv.id} className="text-[10px] text-blue-500 bg-blue-50 w-fit px-2 py-0.5 rounded-full flex items-center gap-1">
+                              <Link size={10}/> فاکتور #{toPersianDigits(inv.number)}
+                          </div>
+                      ))}
                   </div>
               )}
               <p className="text-sm text-gray-500 mb-4 line-clamp-2 min-h-[40px]">{project.description || 'بدون توضیحات'}</p>
@@ -541,42 +557,80 @@ const ProjectsView = () => {
                    </div>
                  )}
 
-                 {/* New Linked Invoice */}
-                 <div className="col-span-1 md:col-span-2 bg-blue-50 dark:bg-blue-900/10 p-4 rounded-xl border border-blue-100 dark:border-blue-800">
-                     <label className="block text-sm font-bold mb-2 flex items-center gap-2 text-blue-700 dark:text-blue-300">
-                         <FileText size={16}/> اتصال به فاکتور (تعیین بودجه خودکار)
-                     </label>
-                     <select 
-                        className="w-full px-4 py-2 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 outline-none"
-                        value={formData.linkedInvoiceId || ''}
-                        onChange={e => {
-                            const invId = e.target.value;
-                            setFormData(prev => {
-                                const inv = invoices.find(i => i.id === invId);
-                                return {
-                                    ...prev, 
-                                    linkedInvoiceId: invId || undefined,
-                                    totalBudget: inv ? inv.finalAmount : prev.totalBudget // Auto-set budget
-                                };
-                            });
-                        }}
-                     >
-                         <option value="">-- بدون فاکتور --</option>
-                         {invoices.map(inv => (
-                             <option key={inv.id} value={inv.id}>
-                                 #{toPersianDigits(inv.number)} - {inv.title} ({formatCurrency(inv.finalAmount)})
-                             </option>
-                         ))}
-                     </select>
-                     {formData.linkedInvoiceId && (
-                         <p className="text-xs text-blue-600 mt-2">
-                             بودجه پروژه به صورت خودکار برابر با مبلغ نهایی این فاکتور ({formatCurrency(invoices.find(i=>i.id===formData.linkedInvoiceId)?.finalAmount || 0)}) تنظیم می‌شود.
-                         </p>
-                     )}
-                 </div>
+                 {/* New Linked Invoices (multi-select) */}
+                 {(() => {
+                     // Derive the currently linked invoice ids (backward-compat with single linkedInvoiceId)
+                     const linkedIds: string[] = formData.linkedInvoiceIds && formData.linkedInvoiceIds.length > 0
+                         ? formData.linkedInvoiceIds
+                         : (formData.linkedInvoiceId ? [formData.linkedInvoiceId] : []);
+
+                     const toggleInvoice = (invId: string) => {
+                         setFormData(prev => {
+                             const current: string[] = prev.linkedInvoiceIds && prev.linkedInvoiceIds.length > 0
+                                 ? prev.linkedInvoiceIds
+                                 : (prev.linkedInvoiceId ? [prev.linkedInvoiceId] : []);
+                             const updated = current.includes(invId)
+                                 ? current.filter(id => id !== invId)
+                                 : [...current, invId];
+                             const newBudget = updated.reduce((sum, id) => {
+                                 const inv = invoices.find(i => i.id === id);
+                                 return sum + (inv ? inv.finalAmount : 0);
+                             }, 0);
+                             return {
+                                 ...prev,
+                                 linkedInvoiceIds: updated,
+                                 linkedInvoiceId: updated[0] || undefined, // keep first for commission/card compat
+                                 totalBudget: updated.length > 0 ? newBudget : prev.totalBudget
+                             };
+                         });
+                     };
+
+                     const linkedTotal = linkedIds.reduce((sum, id) => {
+                         const inv = invoices.find(i => i.id === id);
+                         return sum + (inv ? inv.finalAmount : 0);
+                     }, 0);
+
+                     return (
+                     <div className="col-span-1 md:col-span-2 bg-blue-50 dark:bg-blue-900/10 p-4 rounded-xl border border-blue-100 dark:border-blue-800">
+                         <label className="block text-sm font-bold mb-2 flex items-center gap-2 text-blue-700 dark:text-blue-300">
+                             <FileText size={16}/> اتصال به فاکتور (تعیین بودجه خودکار)
+                             {linkedIds.length > 0 && (
+                                 <span className="text-[10px] bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-200 px-2 py-0.5 rounded-full">
+                                     {toPersianDigits(linkedIds.length)} فاکتور
+                                 </span>
+                             )}
+                         </label>
+                         <div className="max-h-44 overflow-y-auto custom-scrollbar space-y-1.5 bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-700 p-2">
+                             {invoices.length === 0 ? (
+                                 <p className="text-xs text-gray-400 text-center py-3">فاکتوری ثبت نشده است</p>
+                             ) : invoices.map(inv => {
+                                 const isSelected = linkedIds.includes(inv.id);
+                                 return (
+                                     <button
+                                        type="button"
+                                        key={inv.id}
+                                        onClick={() => toggleInvoice(inv.id)}
+                                        className={`w-full text-right px-3 py-2 text-sm rounded-lg font-medium transition flex items-center justify-between gap-2 ${isSelected ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' : 'hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-600 dark:text-gray-300'}`}
+                                     >
+                                         <span className="truncate">#{toPersianDigits(inv.number)} - {inv.title} <span className="text-xs opacity-60">({formatCurrency(inv.finalAmount)})</span></span>
+                                         <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-gray-300 dark:border-slate-500'}`}>
+                                             {isSelected && <Check size={10} className="text-white" strokeWidth={3}/>}
+                                         </div>
+                                     </button>
+                                 );
+                             })}
+                         </div>
+                         {linkedIds.length > 0 && (
+                             <p className="text-xs text-blue-600 mt-2">
+                                 بودجه پروژه به صورت خودکار برابر با مجموع مبلغ نهایی {toPersianDigits(linkedIds.length)} فاکتور ({formatCurrency(linkedTotal)}) تنظیم می‌شود.
+                             </p>
+                         )}
+                     </div>
+                     );
+                 })()}
 
                  <div>
-                   <CurrencyInput label="بودجه کل (تومان)" value={formData.totalBudget} onChange={(val: number) => setFormData({...formData, totalBudget: val})} disabled={!!formData.linkedInvoiceId}/>
+                   <CurrencyInput label="بودجه کل (تومان)" value={formData.totalBudget} onChange={(val: number) => setFormData({...formData, totalBudget: val})} disabled={!!(formData.linkedInvoiceIds && formData.linkedInvoiceIds.length > 0) || !!formData.linkedInvoiceId}/>
                  </div>
                  
                  <div>

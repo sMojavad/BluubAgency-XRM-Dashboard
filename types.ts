@@ -126,7 +126,8 @@ export interface Project {
   budget?: ProjectBudget; // Req 1: New detached entity structure
   
   // New: Link to Invoice for Auto-Budget
-  linkedInvoiceId?: string; 
+  linkedInvoiceId?: string;
+  linkedInvoiceIds?: string[]; // Multiple invoices
 
   paymentMethod: PaymentMethod;
   installments: Installment[];
@@ -310,6 +311,7 @@ export interface Message {
     isSeen: boolean;
     reactions?: Record<string, string>; // userId -> emoji
     replyToId?: string;
+    isEdited?: boolean;
 }
 
 export interface ChatThread {
@@ -345,6 +347,7 @@ export interface InvoiceItem {
   quantity: number;
   unitPrice: number;
   total: number;
+  applyOptions?: boolean; // Whether invoice-level options % applies to this item
 }
 
 export interface InvoiceOptions {

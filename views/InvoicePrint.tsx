@@ -232,6 +232,11 @@ const InvoicePrint = () => {
   // --- Calculations for Display ---
   const config = settings?.invoiceConfig || { extraLangPercent: 30, mobileRespPercent: 20, tabletRespPercent: 15, darkModePercent: 10 };
   const subTotal = invoice.subTotal || 0;
+  // Options apply only to flagged items (matches editor). Backward-compat: if no item has the flag, apply to full subtotal.
+  const hasAnyItemFlag = (invoice.items || []).some(it => it.applyOptions !== undefined);
+  const optionsBase = hasAnyItemFlag
+      ? (invoice.items || []).filter(it => it.applyOptions).reduce((sum, it) => sum + it.total, 0)
+      : subTotal;
   
   return (
     <div className="min-h-screen bg-gray-100 dark:bg-slate-900 pb-20 font-shabnam print:bg-white print:pb-0">
@@ -419,25 +424,25 @@ const InvoicePrint = () => {
                                 {invoice.options.hasExtraLanguage && (
                                     <div className="flex justify-between text-xs text-blue-600">
                                         <span className="flex items-center gap-1">زبان اضافه ({toPersianDigits(config.extraLangPercent)}٪)</span>
-                                        <span className="font-bold" dir="ltr">{`+ تومان ${formatCurrency(calculateOptionCost(subTotal, config.extraLangPercent))}`}</span>
+                                        <span className="font-bold" dir="ltr">{`+ تومان ${formatCurrency(calculateOptionCost(optionsBase, config.extraLangPercent))}`}</span>
                                     </div>
                                 )}
                                 {invoice.options.hasMobileResp && (
                                     <div className="flex justify-between text-xs text-blue-600">
                                         <span className="flex items-center gap-1">ریسپانسیو موبایل ({toPersianDigits(config.mobileRespPercent)}٪)</span>
-                                        <span className="font-bold" dir="ltr">{`+ تومان ${formatCurrency(calculateOptionCost(subTotal, config.mobileRespPercent))}`}</span>
+                                        <span className="font-bold" dir="ltr">{`+ تومان ${formatCurrency(calculateOptionCost(optionsBase, config.mobileRespPercent))}`}</span>
                                     </div>
                                 )}
                                 {invoice.options.hasTabletResp && (
                                     <div className="flex justify-between text-xs text-blue-600">
                                         <span className="flex items-center gap-1">ریسپانسیو تبلت ({toPersianDigits(config.tabletRespPercent)}٪)</span>
-                                        <span className="font-bold" dir="ltr">{`+ تومان ${formatCurrency(calculateOptionCost(subTotal, config.tabletRespPercent))}`}</span>
+                                        <span className="font-bold" dir="ltr">{`+ تومان ${formatCurrency(calculateOptionCost(optionsBase, config.tabletRespPercent))}`}</span>
                                     </div>
                                 )}
                                 {invoice.options.hasDarkMode && (
                                     <div className="flex justify-between text-xs text-blue-600">
                                         <span className="flex items-center gap-1">تم دارک مود ({toPersianDigits(config.darkModePercent)}٪)</span>
-                                        <span className="font-bold" dir="ltr">{`+ تومان ${formatCurrency(calculateOptionCost(subTotal, config.darkModePercent))}`}</span>
+                                        <span className="font-bold" dir="ltr">{`+ تومان ${formatCurrency(calculateOptionCost(optionsBase, config.darkModePercent))}`}</span>
                                     </div>
                                 )}
                             </>

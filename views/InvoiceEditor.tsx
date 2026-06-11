@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../services/db';
 import { AuthContext } from '../AuthContext';
 import { Invoice, InvoiceStatus, Currency, InvoiceItem, Client, ClientType, InvoiceOptions } from '../types';
-import { ArrowRight, Save, Download, Plus, Trash2, Calculator, Percent, FileText, UserPlus, Image as ImageIcon, PenTool, Check, Eraser, Smartphone, Globe, Moon, Tablet, AlertCircle, Loader2, Printer, MapPin, Mail, Hash, Upload } from 'lucide-react';
+import { ArrowRight, Save, Download, Plus, Trash2, Calculator, Percent, FileText, UserPlus, Image as ImageIcon, PenTool, Check, Eraser, Smartphone, Globe, Moon, Tablet, AlertCircle, Loader2, Printer, MapPin, Mail, Hash, Upload, GripVertical } from 'lucide-react';
 import { generateId, toPersianDigits, formatPriceInput, parsePriceInput, formatJalali, numberToWords, formatCurrency, toEnglishDigits } from '../utils';
 import { Modal, JalaliDatePicker, CurrencyInput } from '../components/Shared';
 
@@ -174,6 +174,10 @@ const InvoiceEditor = () => {
   // Client Modal State
   const [newClient, setNewClient] = useState({ name: '', phone: '', type: ClientType.Client });
 
+  // Drag & Drop state for item reordering
+  const [draggedIdx, setDraggedIdx] = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+
   // Load Data & Handle Draft
   useEffect(() => {
       const init = async () => {
@@ -225,7 +229,7 @@ const InvoiceEditor = () => {
 
   // Calculations
   const subTotal = invoice.items?.reduce((sum, item) => sum + item.total, 0) || 0;
-  
+
   // Calculate Options Add-on
   let optionsPercent = 0;
   if ((invoice.projectType === 'Website' || invoice.projectType === 'Application') && invoice.options) {
@@ -234,7 +238,13 @@ const InvoiceEditor = () => {
       if (invoice.options.hasTabletResp) optionsPercent += config.tabletRespPercent;
       if (invoice.options.hasDarkMode) optionsPercent += config.darkModePercent;
   }
-  const optionsAmount = Math.round(subTotal * (optionsPercent / 100));
+  // Options apply only to items explicitly flagged with applyOptions.
+  // Backward-compat: if NO item has the flag defined, apply to all items (legacy behavior).
+  const hasAnyItemFlag = (invoice.items || []).some(it => it.applyOptions !== undefined);
+  const optionsBase = hasAnyItemFlag
+      ? (invoice.items || []).filter(it => it.applyOptions).reduce((sum, it) => sum + it.total, 0)
+      : subTotal;
+  const optionsAmount = Math.round(optionsBase * (optionsPercent / 100));
   const totalBeforeDiscount = subTotal + optionsAmount;
 
   const discountAmount = invoice.discountType === 'Percent' 
@@ -267,7 +277,8 @@ const InvoiceEditor = () => {
           title: '',
           quantity: 1,
           unitPrice: 0,
-          total: 0
+          total: 0,
+          applyOptions: true
       };
       setInvoice({ ...invoice, items: [...(invoice.items || []), newItem] });
       // Clear generic items error
@@ -282,6 +293,30 @@ const InvoiceEditor = () => {
       const newItems = [...(invoice.items || [])];
       newItems.splice(idx, 1);
       setInvoice({ ...invoice, items: newItems });
+  };
+
+  // --- Drag & Drop Reordering ---
+  const handleDragStart = (idx: number) => setDraggedIdx(idx);
+  const handleDragOver = (e: React.DragEvent, idx: number) => {
+      e.preventDefault();
+      if (idx !== dragOverIdx) setDragOverIdx(idx);
+  };
+  const handleDrop = (idx: number) => {
+      if (draggedIdx === null || draggedIdx === idx) {
+          setDraggedIdx(null);
+          setDragOverIdx(null);
+          return;
+      }
+      const newItems = [...(invoice.items || [])];
+      const [moved] = newItems.splice(draggedIdx, 1);
+      newItems.splice(idx, 0, moved);
+      setInvoice({ ...invoice, items: newItems });
+      setDraggedIdx(null);
+      setDragOverIdx(null);
+  };
+  const handleDragEnd = () => {
+      setDraggedIdx(null);
+      setDragOverIdx(null);
   };
 
   const validateForm = () => {
@@ -685,23 +720,47 @@ const InvoiceEditor = () => {
                     {errors.items && <p className="text-xs text-red-500 mb-2">{errors.items}</p>}
                     
                     {/* Items Table */}
-                    <div className="flex-1 overflow-x-auto">
+                    {(() => {
+                        const optionsActive = optionsPercent > 0;
+                        return (
+                        <div className="flex-1 overflow-x-auto">
                         <table className="w-full text-sm">
                             <thead className="bg-gray-50 dark:bg-slate-900 text-gray-500">
                                 <tr>
-                                    <th className="p-3 text-right rounded-r-xl">شرح کالا / خدمات</th>
+                                    <th className="p-3 w-12 text-center rounded-r-xl">#</th>
+                                    <th className="p-3 text-right">شرح کالا / خدمات</th>
                                     <th className="p-3 w-20 text-center">تعداد</th>
                                     <th className="p-3 w-40 text-center">مبلغ واحد</th>
                                     <th className="p-3 w-40 text-center">مبلغ کل</th>
+                                    {optionsActive && (
+                                        <th className="p-3 w-20 text-center" title={`اعمال آپشن‌های اضافی (${toPersianDigits(optionsPercent)}٪) روی این آیتم`}>آپشن</th>
+                                    )}
                                     <th className="p-3 w-10 rounded-l-xl"></th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100 dark:divide-slate-700">
                                 {invoice.items?.map((item, idx) => (
-                                    <tr key={item.id} className="group">
+                                    <tr
+                                        key={item.id}
+                                        className={`group transition-colors ${draggedIdx === idx ? 'opacity-40' : ''} ${dragOverIdx === idx && draggedIdx !== null && draggedIdx !== idx ? 'bg-primary-50/60 dark:bg-primary-900/20' : ''}`}
+                                        onDragOver={(e) => handleDragOver(e, idx)}
+                                        onDrop={() => handleDrop(idx)}
+                                    >
+                                        <td className="p-2 align-top pt-5">
+                                            <div
+                                                draggable
+                                                onDragStart={() => handleDragStart(idx)}
+                                                onDragEnd={handleDragEnd}
+                                                className="flex flex-col items-center gap-1 cursor-grab active:cursor-grabbing text-gray-300 hover:text-primary-500 transition select-none"
+                                                title="برای جابجایی بکشید"
+                                            >
+                                                <GripVertical size={16}/>
+                                                <span className="text-xs font-bold text-gray-400">{toPersianDigits(idx + 1)}</span>
+                                            </div>
+                                        </td>
                                         <td className="p-4 align-top">
                                             <div className="flex flex-col gap-2">
-                                                <input 
+                                                <input
                                                     type="text"
                                                     className={`w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-slate-900 border outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/20 transition font-shabnam font-bold text-sm text-gray-800 dark:text-gray-200 placeholder:font-normal placeholder:text-gray-400 ${errors[`item-${idx}-title`] ? 'border-red-500 ring-1 ring-red-500/20' : 'border-gray-200 dark:border-slate-700'}`}
                                                     placeholder="عنوان کالا / خدمات"
@@ -709,9 +768,9 @@ const InvoiceEditor = () => {
                                                     onChange={e => handleItemChange(idx, 'title', e.target.value)}
                                                 />
                                                 {errors[`item-${idx}-title`] && <span className="text-xs text-red-500">{errors[`item-${idx}-title`]}</span>}
-                                                <textarea 
+                                                <textarea
                                                     rows={2}
-                                                    className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/20 transition font-shabnam text-xs text-gray-600 dark:text-gray-400 placeholder:text-gray-400 resize-none leading-relaxed" 
+                                                    className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/20 transition font-shabnam text-xs text-gray-600 dark:text-gray-400 placeholder:text-gray-400 resize-none leading-relaxed"
                                                     placeholder="توضیحات تکمیلی (اختیاری) - مثلاً رنگ، سایز یا شرایط..."
                                                     value={item.description || ''}
                                                     onChange={e => handleItemChange(idx, 'description', e.target.value)}
@@ -719,7 +778,7 @@ const InvoiceEditor = () => {
                                             </div>
                                         </td>
                                         <td className="p-4 align-top">
-                                            <input 
+                                            <input
                                                 type="number"
                                                 className="w-full px-2 py-2.5 text-center bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl outline-none focus:border-primary-500 transition font-shabnam"
                                                 value={item.quantity}
@@ -732,6 +791,17 @@ const InvoiceEditor = () => {
                                         <td className="p-4 align-top text-center font-bold text-gray-700 dark:text-gray-300 font-shabnam text-base pt-5">
                                             {formatPriceInput(item.total.toString())}
                                         </td>
+                                        {optionsActive && (
+                                            <td className="p-4 align-top text-center pt-5">
+                                                <input
+                                                    type="checkbox"
+                                                    className="w-5 h-5 rounded text-primary-600 focus:ring-primary-500 border-gray-300 cursor-pointer"
+                                                    checked={item.applyOptions !== false}
+                                                    onChange={e => handleItemChange(idx, 'applyOptions', e.target.checked)}
+                                                    title="اعمال درصد آپشن‌ها روی این آیتم"
+                                                />
+                                            </td>
+                                        )}
                                         <td className="p-4 align-top text-center pt-5">
                                             <button onClick={() => removeItem(idx)} className="text-gray-300 hover:text-red-500 transition"><Trash2 size={16}/></button>
                                         </td>
@@ -742,7 +812,14 @@ const InvoiceEditor = () => {
                         <button onClick={addItem} className="mt-4 flex items-center gap-2 text-primary-600 text-sm font-bold hover:bg-primary-50 px-3 py-1.5 rounded-lg transition">
                             <Plus size={16}/> افزودن آیتم جدید
                         </button>
-                    </div>
+                        {optionsActive && (
+                            <p className="mt-3 text-[11px] text-blue-500 bg-blue-50 dark:bg-blue-900/20 px-3 py-2 rounded-lg flex items-center gap-1.5">
+                                <AlertCircle size={13}/> آپشن‌های اضافی ({toPersianDigits(optionsPercent)}٪) فقط روی آیتم‌هایی که ستون «آپشن» آن‌ها تیک خورده اعمال می‌شود.
+                            </p>
+                        )}
+                        </div>
+                        );
+                    })()}
 
                     {/* Final Calculations */}
                     <div className="mt-8 border-t border-gray-100 dark:border-slate-700 pt-6 grid grid-cols-1 md:grid-cols-2 gap-8">
