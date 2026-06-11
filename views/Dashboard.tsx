@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useContext, useRef, useMemo } from 'react';
 import { api } from '../services/db';
 import { AuthContext } from '../AuthContext';
-import { Project, Client, Transaction, Task, UserRole, TransactionType, Log, User } from '../types';
+import { Project, Client, Transaction, Task, UserRole, UserStatus, TransactionType, Log, User } from '../types';
 import { toPersianDigits, formatCurrency, getDailyMessage, getRelativeDateLabel, formatJalali, daysBetween, getJalaliParts, calculateDashboardFinancials } from '../utils';
 import { AreaChart, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, ReferenceLine, ComposedChart } from 'recharts';
 import { 
@@ -723,11 +723,24 @@ const TeamActivityWidget = ({ users, projects, tasks }: any) => {
         const fetchAndCalculate = async () => {
             setLoading(true);
             try {
-                const logs = await api.logs.getAll();
-                const teamMembers = users.filter((u: any) => u.role === UserRole.TeamMember);
-                
+                const [logs, departments] = await Promise.all([api.logs.getAll(), api.departments.getAll()]);
+                const deptMap: Record<string, string> = {};
+                departments.forEach((d: any) => { deptMap[d.id] = d.name; });
+
+                const roleLabel = (role: string) => {
+                    switch (role) {
+                        case UserRole.Admin: return 'مدیر کل';
+                        case UserRole.Manager: return 'مدیر';
+                        case UserRole.TeamMember: return 'عضو تیم';
+                        default: return 'عضو تیم';
+                    }
+                };
+
+                // Include real internal staff (team members + managers), exclude clients/connections
+                const teamMembers = users.filter((u: any) => (u.role === UserRole.TeamMember || u.role === UserRole.Manager) && u.status !== UserStatus.Deleted);
+
                 const summary = teamMembers.map((member: any) => {
-                    const memberProjects = projects.filter((p: any) => p.status === 'Active' && p.members.includes(member.id));
+                    const memberProjects = projects.filter((p: any) => p.status === 'Active' && p.members?.includes(member.id));
                     const activeProjectsCount = memberProjects.length;
 
                     const memberTasks = tasks.filter((t: any) => t.assignedTo === member.id);
@@ -736,13 +749,12 @@ const TeamActivityWidget = ({ users, projects, tasks }: any) => {
                     const completedTasksCount = memberTasks.filter((t: any) => t.isDone).length;
                     const overdueTasksCount = openTasks.filter((t: any) => t.deadline && new Date(t.deadline) < new Date()).length;
 
+                    // Real "last activity": latest of last login and last logged action
                     const memberLogs = logs.filter((l: any) => l.userId === member.id).sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-                    const lastLog = memberLogs.length > 0 ? memberLogs[0] : null;
-
-                    let lastActivityAt: Date | null = null;
-                    if (lastLog) {
-                        lastActivityAt = new Date(lastLog.timestamp);
-                    }
+                    const lastLogTs = memberLogs.length > 0 ? new Date(memberLogs[0].timestamp).getTime() : 0;
+                    const lastLoginTs = member.lastLoginAt ? new Date(member.lastLoginAt).getTime() : 0;
+                    const lastActivityTs = Math.max(lastLogTs, lastLoginTs);
+                    const lastActivityAt: Date | null = lastActivityTs > 0 ? new Date(lastActivityTs) : null;
 
                     let lastDays = 999;
                     if (lastActivityAt) {
@@ -776,8 +788,8 @@ const TeamActivityWidget = ({ users, projects, tasks }: any) => {
                         userId: member.id,
                         fullName: member.firstName + ' ' + member.lastName,
                         avatarUrl: member.avatarUrl,
-                        department: member.departmentName || 'بدون دپارتمان',
-                        title: member.title || 'عضو تیم',
+                        department: (member.departmentId && deptMap[member.departmentId]) || 'بدون دپارتمان',
+                        title: roleLabel(member.role),
                         activeProjectsCount,
                         openTasksCount,
                         completedTasksCount,
@@ -788,8 +800,10 @@ const TeamActivityWidget = ({ users, projects, tasks }: any) => {
                         workloadStatus,
                         workloadStatusLabelFa
                     };
-                });
-                
+                })
+                // Most recently active first
+                .sort((a: any, b: any) => (b.lastActivityAt?.getTime() || 0) - (a.lastActivityAt?.getTime() || 0));
+
                 setActivities(summary);
             } catch (err) {
                 console.error("Failed to load team activity", err);

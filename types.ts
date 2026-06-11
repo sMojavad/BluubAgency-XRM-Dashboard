@@ -427,7 +427,9 @@ export interface SidebarItemConfig {
 }
 
 export interface AppSettings {
-  themeColor: string;
+  themeColor: string;       // primary color hex (drives the whole primary palette)
+  brandColor?: string;      // brand accent color hex
+  dashboardLogoUrl?: string; // logo shown in the sidebar/dashboard
   menuTitles: Record<string, string>;
   projectTypes: string[];
   

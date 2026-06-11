@@ -9,6 +9,7 @@ import {
 import { initDB, api } from './services/db';
 import { syncFromSupabase } from './services/supabase';
 import { playNotificationSound } from './services/sound';
+import { applyTheme } from './services/theme';
 import { User, UserRole, Task, AppSettings, PermissionKey, ToastMessage, ToastType, Notification, SidebarItemConfig } from './types';
 import { toPersianDigits, formatJalali, generateId, checkPermission, getIcon, DEFAULT_SIDEBAR_CONFIG, getRelativeDateLabel } from './utils';
 import { Modal, JalaliDatePicker, ToastContainer } from './components/Shared';
@@ -144,20 +145,32 @@ const Sidebar = ({ user, settings, unreadMessages, isSidebarOpen, setIsSidebarOp
       <div className={`p-6 flex items-center ${isSidebarOpen ? 'justify-between' : 'justify-center flex-col gap-4'} border-b border-gray-100 dark:border-slate-700`}>
         {isSidebarOpen && (
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-primary-500 to-primary-300 flex items-center justify-center text-white font-bold shadow-md">
-              X
-            </div>
+            {settings?.dashboardLogoUrl ? (
+              <div className="w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center bg-white dark:bg-slate-700 shadow-md shrink-0">
+                <img src={settings.dashboardLogoUrl} alt="logo" className="w-full h-full object-contain"/>
+              </div>
+            ) : (
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-primary-500 to-primary-300 flex items-center justify-center text-white font-bold shadow-md">
+                X
+              </div>
+            )}
             <div>
               <h1 className="font-extrabold text-xl text-gray-800 dark:text-white tracking-tight">XRM</h1>
               <p className="text-xs text-gray-400">سیستم جامع مدیریت</p>
             </div>
           </div>
         )}
-        
+
         {!isSidebarOpen && (
-          <div className="w-10 h-10 min-h-[40px] rounded-xl bg-gradient-to-tr from-primary-500 to-primary-300 flex flex-shrink-0 items-center justify-center text-white font-bold shadow-md">
-            X
-          </div>
+          settings?.dashboardLogoUrl ? (
+            <div className="w-10 h-10 min-h-[40px] rounded-xl overflow-hidden flex flex-shrink-0 items-center justify-center bg-white dark:bg-slate-700 shadow-md">
+              <img src={settings.dashboardLogoUrl} alt="logo" className="w-full h-full object-contain"/>
+            </div>
+          ) : (
+            <div className="w-10 h-10 min-h-[40px] rounded-xl bg-gradient-to-tr from-primary-500 to-primary-300 flex flex-shrink-0 items-center justify-center text-white font-bold shadow-md">
+              X
+            </div>
+          )
         )}
 
         <button 
@@ -799,6 +812,7 @@ const App = () => {
   const refreshSettings = async () => {
       const s = await api.settings.get();
       setSettings(s);
+      applyTheme(s.themeColor, s.brandColor);
   };
 
   const login = (userData: User) => {

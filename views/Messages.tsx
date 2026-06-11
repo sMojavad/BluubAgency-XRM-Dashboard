@@ -3,9 +3,77 @@ import React, { useState, useEffect, useContext, useRef } from 'react';
 import { api } from '../services/db';
 import { AuthContext } from '../AuthContext';
 import { User, Message, ChatThread } from '../types';
-import { Send, Image as ImageIcon, Mic, MoreVertical, Search, Phone, Video, MessageSquare, Users, Megaphone, Trash2, Lock, Globe, Plus, X, Edit2, Check, Download, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
+import { Send, Image as ImageIcon, Mic, MoreVertical, Search, Phone, Video, MessageSquare, Users, Megaphone, Trash2, Lock, Globe, Plus, X, Edit2, Check, Download, ZoomIn, ZoomOut, RotateCcw, Play, Pause } from 'lucide-react';
 import { formatJalaliShort, toPersianDigits } from '../utils';
 import { playNotificationSound } from '../services/sound';
+
+// Custom audio player for voice messages — matches the design system (no default browser UI)
+const VoiceMessage = ({ src, mine }: { src: string; mine: boolean }) => {
+    const audioRef = React.useRef<HTMLAudioElement>(null);
+    const [playing, setPlaying] = React.useState(false);
+    const [progress, setProgress] = React.useState(0); // 0..1
+    const [duration, setDuration] = React.useState(0);
+    const [current, setCurrent] = React.useState(0);
+
+    const togglePlay = () => {
+        const a = audioRef.current;
+        if (!a) return;
+        if (playing) { a.pause(); } else { a.play().catch(() => {}); }
+    };
+
+    const fmt = (s: number) => {
+        if (!isFinite(s) || s < 0) s = 0;
+        const m = Math.floor(s / 60);
+        const sec = Math.floor(s % 60);
+        return toPersianDigits(`${m}:${sec.toString().padStart(2, '0')}`);
+    };
+
+    const onSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+        const a = audioRef.current;
+        if (!a || !duration) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        // RTL-agnostic: compute ratio from left edge
+        const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+        a.currentTime = ratio * duration;
+    };
+
+    // Static waveform bars (decorative, consistent per message)
+    const bars = React.useMemo(() => Array.from({ length: 28 }, (_, i) => 30 + ((i * 37) % 70)), []);
+
+    const accent = mine ? 'bg-white' : 'bg-primary-500';
+    const accentDim = mine ? 'bg-white/30' : 'bg-gray-300 dark:bg-slate-500';
+
+    return (
+        <div className="flex items-center gap-3 min-w-[210px]">
+            <audio
+                ref={audioRef}
+                src={src}
+                onPlay={() => setPlaying(true)}
+                onPause={() => setPlaying(false)}
+                onEnded={() => { setPlaying(false); setProgress(0); setCurrent(0); }}
+                onLoadedMetadata={e => { const d = (e.target as HTMLAudioElement).duration; setDuration(isFinite(d) ? d : 0); }}
+                onTimeUpdate={e => { const a = e.target as HTMLAudioElement; setCurrent(a.currentTime); if (a.duration) setProgress(a.currentTime / a.duration); }}
+            />
+            <button
+                onClick={togglePlay}
+                className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition active:scale-90 shadow-sm ${mine ? 'bg-white/25 text-white hover:bg-white/35' : 'bg-primary-500 text-white hover:bg-primary-600'}`}
+            >
+                {playing ? <Pause size={18}/> : <Play size={18} className="ml-0.5"/>}
+            </button>
+            <div className="flex-1">
+                <div className="flex items-center gap-[2px] h-6 cursor-pointer" onClick={onSeek}>
+                    {bars.map((h, i) => {
+                        const active = i / bars.length <= progress;
+                        return <div key={i} className={`w-[3px] rounded-full transition-colors ${active ? accent : accentDim}`} style={{ height: `${h}%` }}/>;
+                    })}
+                </div>
+                <div className={`text-[10px] mt-1 ${mine ? 'text-primary-100' : 'text-gray-400'}`}>
+                    {playing || current > 0 ? fmt(current) : fmt(duration)}
+                </div>
+            </div>
+        </div>
+    );
+};
 
 const MessagesView = () => {
   const { user, confirmAction, settings } = useContext(AuthContext);
@@ -356,55 +424,58 @@ const MessagesView = () => {
                 </div>
             </div>
             
-            <div className="flex-1 overflow-y-auto custom-scrollbar">
-                {threads.map(t => (
-                    <div 
-                        key={t.id} 
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
+                {threads.length === 0 && (
+                    <div className="text-center text-gray-400 py-10 text-sm">هنوز گفتگویی ندارید</div>
+                )}
+                {threads.map(t => {
+                    const isActive = activeThreadId === t.id;
+                    const unread = unreadMap[t.id] || 0;
+                    const hasUnread = unread > 0 && !isActive;
+                    const isBroadcast = t.type === 'broadcast';
+                    const isGroup = t.type === 'group' || isBroadcast;
+                    return (
+                    <div
+                        key={t.id}
                         onClick={() => setActiveThreadId(t.id)}
-                        className={`p-4 flex items-center gap-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-700 transition group relative ${activeThreadId === t.id ? 'bg-primary-50 dark:bg-slate-700' : ''}`}
+                        className={`p-2.5 flex items-center gap-3 cursor-pointer rounded-2xl transition-all duration-200 group relative active:scale-[0.98] ${isActive ? 'bg-primary-50 dark:bg-primary-900/20 shadow-sm' : 'hover:bg-gray-50 dark:hover:bg-slate-700/50'}`}
                     >
-                        <div className="relative w-10 h-10 shrink-0">
-                            <div className="w-10 h-10 rounded-full bg-gray-200 dark:bg-slate-600 flex items-center justify-center text-gray-500 font-bold overflow-hidden">
-                                {t.type === 'broadcast' ? <Megaphone size={18}/> : getThreadName(t)[0]}
+                        <div className="relative w-12 h-12 shrink-0">
+                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg overflow-hidden shadow-sm transition-transform group-hover:scale-105 ${isGroup ? 'bg-gradient-to-tr from-blue-500 to-indigo-400 text-white' : 'bg-gradient-to-tr from-primary-500 to-primary-300 text-white'}`}>
+                                {isBroadcast ? <Megaphone size={20}/> : getThreadName(t)[0]}
                             </div>
-                            {/* Unread badge on avatar (feature 3) */}
-                            {(unreadMap[t.id] || 0) > 0 && activeThreadId !== t.id && (
-                                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center border-2 border-white dark:border-slate-800 shadow-sm">
-                                    {toPersianDigits((unreadMap[t.id] || 0) > 99 ? '99+' : unreadMap[t.id])}
+                            {hasUnread && (
+                                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center border-2 border-white dark:border-slate-800 shadow animate-in zoom-in">
+                                    {toPersianDigits(unread > 99 ? '99+' : unread)}
                                 </span>
                             )}
                         </div>
                         <div className="flex-1 min-w-0">
-                            <div className="flex justify-between items-center">
-                                <h4 className={`text-sm truncate ${(unreadMap[t.id] || 0) > 0 && activeThreadId !== t.id ? 'font-black text-gray-900 dark:text-white' : 'font-bold text-gray-800 dark:text-white'}`}>{getThreadName(t)}</h4>
-                                <span className="text-[9px] text-gray-400">{formatJalaliShort(t.updatedAt)}</span>
+                            <div className="flex justify-between items-center gap-2">
+                                <h4 className={`text-sm truncate ${hasUnread ? 'font-black text-gray-900 dark:text-white' : 'font-bold text-gray-700 dark:text-gray-200'}`}>{getThreadName(t)}</h4>
+                                <span className="text-[9px] text-gray-400 shrink-0">{formatJalaliShort(t.updatedAt)}</span>
                             </div>
-                            <p className={`text-xs truncate mt-0.5 ${(unreadMap[t.id] || 0) > 0 && activeThreadId !== t.id ? 'text-gray-700 dark:text-gray-200 font-bold' : 'text-gray-400'}`}>{t.lastMessage || 'شروع گفتگو'}</p>
-                            
-                            {/* Tags */}
-                            <div className="flex gap-1 mt-1">
-                                {t.type === 'direct' && (
-                                    <span className="text-[9px] bg-gray-100 dark:bg-slate-600 text-gray-500 px-1.5 py-0.5 rounded flex items-center gap-0.5">
-                                        <Lock size={8}/> خصوصی
-                                    </span>
-                                )}
-                                {(t.type === 'group' || t.type === 'broadcast') && (
-                                    <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded flex items-center gap-0.5">
-                                        <Globe size={8}/> عمومی
-                                    </span>
-                                )}
+                            <div className="flex items-center justify-between gap-2 mt-1">
+                                <p className={`text-xs truncate ${hasUnread ? 'text-gray-700 dark:text-gray-200 font-bold' : 'text-gray-400'}`}>{t.lastMessage || 'شروع گفتگو'}</p>
+                                <span className={`text-[9px] px-1.5 py-0.5 rounded-md flex items-center gap-0.5 shrink-0 ${isGroup ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300' : 'bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-gray-400'}`}>
+                                    {isGroup ? <Globe size={8}/> : <Lock size={8}/>}
+                                </span>
                             </div>
                         </div>
-                        
-                        <button 
+
+                        {/* Active indicator bar */}
+                        {isActive && <span className="absolute right-0 top-1/2 -translate-y-1/2 w-1 h-7 bg-primary-500 rounded-l-full"/>}
+
+                        <button
                             type="button"
                             onClick={(e) => handleDeleteThread(e, t.id)}
-                            className="absolute left-2 opacity-0 group-hover:opacity-100 p-1.5 bg-red-50 text-red-500 rounded-lg hover:bg-red-100 transition shadow-sm z-10 cursor-pointer"
+                            className="absolute left-2 top-2 opacity-0 group-hover:opacity-100 p-1.5 bg-white dark:bg-slate-800 text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-slate-700 transition shadow-sm z-10 cursor-pointer active:scale-90"
                         >
-                            <Trash2 size={14} className="pointer-events-none"/>
+                            <Trash2 size={13} className="pointer-events-none"/>
                         </button>
                     </div>
-                ))}
+                    );
+                })}
             </div>
         </div>
 
@@ -486,12 +557,7 @@ const MessagesView = () => {
                                                         </div>
                                                     </div>
                                                 ) : msg.type === 'voice' ? (
-                                                    <div className={`flex items-center gap-2 rounded-xl p-1 ${isMine ? 'bg-white/10' : 'bg-gray-50 dark:bg-slate-600/40'}`}>
-                                                        <div className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center ${isMine ? 'bg-white/25 text-white' : 'bg-primary-100 dark:bg-slate-500 text-primary-600 dark:text-primary-200'}`}>
-                                                            <Mic size={16}/>
-                                                        </div>
-                                                        <audio controls src={msg.content} className="h-9 max-w-[200px]"/>
-                                                    </div>
+                                                    <VoiceMessage src={msg.content} mine={isMine}/>
                                                 ) : (
                                                     <span className="whitespace-pre-wrap break-words leading-relaxed">{msg.content}</span>
                                                 )}

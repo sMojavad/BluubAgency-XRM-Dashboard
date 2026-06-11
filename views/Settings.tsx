@@ -7,6 +7,7 @@ import { formatJalaliShort, checkPermission, ALL_PERMISSIONS, DEFAULT_ROLE_PERMI
 import { Users, Shield, Trash2, Edit2, Save, AlertTriangle, FileText, Image as ImageIcon, PenTool, Percent, Menu, Lock, CheckCircle, XCircle, ChevronUp, ChevronDown, Eye, GripVertical, Activity, Filter, Search, FolderKanban, DollarSign, CheckSquare, Settings as SettingsIcon, Clock, Calendar, List, AlignLeft, Wallet, Plus, ArrowRight, Archive, RotateCcw, Volume2, VolumeX, Play, Music, Upload, Bell } from 'lucide-react';
 import { Modal } from '../components/Shared';
 import { BUILTIN_SOUNDS, previewSound } from '../services/sound';
+import { applyTheme } from '../services/theme';
 
 type SoundConfigShape = { enabled: boolean; selectedId: string; volume?: number; customSounds?: { id: string; name: string; dataUrl: string }[] };
 
@@ -186,6 +187,14 @@ const SettingsView = () => {
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({ appearance: true, chatSound: false, bellSound: false, healthMessages: false });
   const toggleSection = (key: string) => setOpenSections(prev => ({ ...prev, [key]: !prev[key] }));
 
+  // Appearance: theme/brand colors + dashboard logo
+  const [appearance, setAppearance] = useState<{ themeColor: string; brandColor: string; dashboardLogoUrl: string }>({
+      themeColor: '#14b8a6',
+      brandColor: '#14b8a6',
+      dashboardLogoUrl: ''
+  });
+  const logoFileRef = React.useRef<HTMLInputElement>(null);
+
   // --- NEW: Permission & Menu States ---
   const [sidebarItems, setSidebarItems] = useState<SidebarItemConfig[]>([]);
   const [draggedItemIndex, setDraggedItemIndex] = useState<number | null>(null);
@@ -217,6 +226,7 @@ const SettingsView = () => {
       if(s.projectHealthMessages) setProjectHealthMessages(s.projectHealthMessages);
       if(s.notificationSound) setNotificationSound({ enabled: true, selectedId: 'ding', volume: 0.6, customSounds: [], ...s.notificationSound });
       if(s.notificationBellSound) setNotificationBellSound({ enabled: true, selectedId: 'chime', volume: 0.6, customSounds: [], ...s.notificationBellSound });
+      setAppearance({ themeColor: s.themeColor || '#14b8a6', brandColor: s.brandColor || s.themeColor || '#14b8a6', dashboardLogoUrl: s.dashboardLogoUrl || '' });
 
       // Load Invoice Settings
       setInvoiceSettings({
@@ -238,6 +248,9 @@ const SettingsView = () => {
           projectHealthMessages,
           notificationSound,
           notificationBellSound,
+          themeColor: appearance.themeColor,
+          brandColor: appearance.brandColor,
+          dashboardLogoUrl: appearance.dashboardLogoUrl,
           // Save Invoice Settings
           defaultLogoUrl: invoiceSettings.defaultLogoUrl,
           defaultSignatureUrl: invoiceSettings.defaultSignatureUrl,
@@ -251,6 +264,26 @@ const SettingsView = () => {
       setSettings(newSettings);
       await refreshSettings(); // Update Context
       showToast('تنظیمات با موفقیت ذخیره شد', 'success');
+  };
+
+  // --- Appearance handlers ---
+  const handlePrimaryColorChange = (hex: string) => {
+      setAppearance(prev => ({ ...prev, themeColor: hex }));
+      applyTheme(hex, appearance.brandColor); // live preview
+  };
+  const handleBrandColorChange = (hex: string) => {
+      setAppearance(prev => ({ ...prev, brandColor: hex }));
+      applyTheme(appearance.themeColor, hex); // live preview
+  };
+  const handleDashboardLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      if (!file.type.startsWith('image/')) { showToast('فقط فایل تصویری مجاز است', 'error'); return; }
+      if (file.size > 512 * 1024) { showToast('حجم لوگو باید کمتر از ۵۱۲ کیلوبایت باشد', 'error'); return; }
+      const reader = new FileReader();
+      reader.onload = (ev) => setAppearance(prev => ({ ...prev, dashboardLogoUrl: ev.target?.result as string }));
+      reader.readAsDataURL(file);
+      e.target.value = '';
   };
 
   // --- Sidebar DnD Logic ---
@@ -575,7 +608,8 @@ const SettingsView = () => {
                    title="ظاهر و تم"
                    subtitle="حالت تاریک و رنگ تم سیستم"
                >
-                   <div className="space-y-5 pt-3">
+                   <div className="space-y-6 pt-3">
+                       {/* Dark mode */}
                        <div className="flex items-center justify-between">
                            <div>
                                <h3 className="font-bold text-sm">حالت تاریک (Dark Mode)</h3>
@@ -588,14 +622,91 @@ const SettingsView = () => {
                                 تغییر وضعیت
                            </button>
                        </div>
+
                        <hr className="border-gray-100 dark:border-slate-700"/>
+
+                       {/* Dashboard logo */}
                        <div>
-                           <h3 className="font-bold text-sm mb-2">رنگ تم سیستم</h3>
-                           <div className="flex gap-2">
-                               {['#14b8a6', '#3b82f6', '#8b5cf6', '#ef4444', '#f59e0b'].map(c => (
-                                   <button key={c} className="w-8 h-8 rounded-full shadow-sm active:scale-90 transition" style={{backgroundColor: c}}></button>
-                               ))}
+                           <h3 className="font-bold text-sm mb-3">لوگوی داشبورد</h3>
+                           <div className="flex items-center gap-4">
+                               <div className="w-16 h-16 rounded-2xl bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 flex items-center justify-center overflow-hidden shrink-0">
+                                   {appearance.dashboardLogoUrl
+                                       ? <img src={appearance.dashboardLogoUrl} className="w-full h-full object-contain"/>
+                                       : <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-primary-500 to-primary-300 flex items-center justify-center text-white font-bold">X</div>}
+                               </div>
+                               <div className="flex flex-col gap-2">
+                                   <button onClick={() => logoFileRef.current?.click()} className="px-4 py-2 bg-gray-100 dark:bg-slate-700 rounded-xl text-sm font-bold hover:bg-gray-200 dark:hover:bg-slate-600 transition active:scale-95 flex items-center gap-2 w-fit">
+                                       <Upload size={15}/> آپلود لوگو
+                                   </button>
+                                   {appearance.dashboardLogoUrl && (
+                                       <button onClick={() => setAppearance(prev => ({ ...prev, dashboardLogoUrl: '' }))} className="text-xs text-red-500 hover:underline w-fit">حذف لوگو</button>
+                                   )}
+                                   <input ref={logoFileRef} type="file" accept="image/*" className="hidden" onChange={handleDashboardLogoUpload}/>
+                               </div>
                            </div>
+                           <p className="text-[11px] text-gray-400 mt-2">حداکثر ۵۱۲ کیلوبایت — PNG با پس‌زمینه شفاف توصیه می‌شود</p>
+                       </div>
+
+                       <hr className="border-gray-100 dark:border-slate-700"/>
+
+                       {/* Theme colors */}
+                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                           {/* Primary color */}
+                           <div>
+                               <h3 className="font-bold text-sm mb-2">رنگ اصلی (Primary)</h3>
+                               <p className="text-[11px] text-gray-400 mb-3">رنگ غالب دکمه‌ها و عناصر فعال سیستم</p>
+                               <div className="flex items-center gap-3">
+                                   <label className="relative w-11 h-11 rounded-xl overflow-hidden shadow-sm border border-gray-200 dark:border-slate-700 shrink-0 cursor-pointer" style={{ backgroundColor: appearance.themeColor }}>
+                                       <input type="color" value={appearance.themeColor} onChange={e => handlePrimaryColorChange(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer"/>
+                                   </label>
+                                   <div className="flex-1 flex items-center bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl px-3 h-11">
+                                       <span className="text-gray-400 text-sm">#</span>
+                                       <input
+                                           type="text"
+                                           value={appearance.themeColor.replace('#', '')}
+                                           onChange={e => { const v = '#' + e.target.value.replace(/[^0-9a-fA-F]/g, '').slice(0, 6); handlePrimaryColorChange(v); }}
+                                           className="flex-1 bg-transparent outline-none text-sm font-mono dir-ltr uppercase ml-1"
+                                           placeholder="14B8A6"
+                                       />
+                                   </div>
+                               </div>
+                               <div className="flex gap-1.5 mt-3">
+                                   {['#14b8a6', '#3b82f6', '#8b5cf6', '#ec4899', '#ef4444', '#f59e0b', '#10b981'].map(c => (
+                                       <button key={c} onClick={() => handlePrimaryColorChange(c)} className={`w-7 h-7 rounded-full shadow-sm active:scale-90 transition ${appearance.themeColor.toLowerCase() === c ? 'ring-2 ring-offset-2 ring-gray-400 dark:ring-offset-slate-800' : ''}`} style={{backgroundColor: c}}></button>
+                                   ))}
+                               </div>
+                           </div>
+
+                           {/* Brand color */}
+                           <div>
+                               <h3 className="font-bold text-sm mb-2">رنگ برند (Brand)</h3>
+                               <p className="text-[11px] text-gray-400 mb-3">رنگ هویت برند برای لوگو و عناصر شاخص</p>
+                               <div className="flex items-center gap-3">
+                                   <label className="relative w-11 h-11 rounded-xl overflow-hidden shadow-sm border border-gray-200 dark:border-slate-700 shrink-0 cursor-pointer" style={{ backgroundColor: appearance.brandColor }}>
+                                       <input type="color" value={appearance.brandColor} onChange={e => handleBrandColorChange(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer"/>
+                                   </label>
+                                   <div className="flex-1 flex items-center bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl px-3 h-11">
+                                       <span className="text-gray-400 text-sm">#</span>
+                                       <input
+                                           type="text"
+                                           value={appearance.brandColor.replace('#', '')}
+                                           onChange={e => { const v = '#' + e.target.value.replace(/[^0-9a-fA-F]/g, '').slice(0, 6); handleBrandColorChange(v); }}
+                                           className="flex-1 bg-transparent outline-none text-sm font-mono dir-ltr uppercase ml-1"
+                                           placeholder="14B8A6"
+                                       />
+                                   </div>
+                               </div>
+                               <div className="flex gap-1.5 mt-3">
+                                   {['#14b8a6', '#0ea5e9', '#6366f1', '#d946ef', '#f43f5e', '#f97316', '#22c55e'].map(c => (
+                                       <button key={c} onClick={() => handleBrandColorChange(c)} className={`w-7 h-7 rounded-full shadow-sm active:scale-90 transition ${appearance.brandColor.toLowerCase() === c ? 'ring-2 ring-offset-2 ring-gray-400 dark:ring-offset-slate-800' : ''}`} style={{backgroundColor: c}}></button>
+                                   ))}
+                               </div>
+                           </div>
+                       </div>
+
+                       {/* Live preview note */}
+                       <div className="bg-primary-50 dark:bg-primary-900/20 rounded-xl p-3 flex items-center gap-2 text-xs text-primary-700 dark:text-primary-300">
+                           <CheckCircle size={15}/> تغییر رنگ‌ها بلافاصله به‌صورت پیش‌نمایش اعمال می‌شود. برای ماندگاری روی همه دستگاه‌ها، دکمه «ذخیره تغییرات» را بزنید.
                        </div>
                    </div>
                </CollapsibleSection>
