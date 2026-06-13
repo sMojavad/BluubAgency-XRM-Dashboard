@@ -3,7 +3,7 @@ import React, { useEffect, useState, useContext, useRef, useMemo } from 'react';
 import { api } from '../services/db';
 import { AuthContext } from '../AuthContext';
 import { Project, Client, Transaction, Task, UserRole, UserStatus, TransactionType, Log, User } from '../types';
-import { toPersianDigits, formatCurrency, getDailyMessage, getRelativeDateLabel, formatJalali, daysBetween, getJalaliParts, calculateDashboardFinancials } from '../utils';
+import { toPersianDigits, formatCurrency, getDailyMessage, getRelativeDateLabel, formatJalali, daysBetween, getJalaliParts, calculateDashboardFinancials, toEnglishDigits } from '../utils';
 import { AreaChart, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, ReferenceLine, ComposedChart } from 'recharts';
 import { 
     TrendingUp, AlertCircle, CheckCircle, Trash2, Target, 
@@ -419,7 +419,11 @@ const FinanceChartWidget = ({ transactions }: { transactions: Transaction[] }) =
 
         transactions.forEach(t => {
             if (t.status === 'Cancelled') return;
-            const { y, m } = getJalaliParts(new Date(t.date));
+            // t.date is stored in Jalali format with Persian digits e.g. '۱۴۰۵/۰۳/۲۳'
+            const parts = toEnglishDigits(t.date || '').split('/');
+            if (parts.length !== 3) return;
+            const y = parseInt(parts[0]);
+            const m = parseInt(parts[1]);
             const key = `${y}-${m}`;
             const bucket = last6Months.find(b => b.key === key);
             if (bucket) {
@@ -573,6 +577,67 @@ const ActivityWidget = ({ recentLogs }: any) => (
         </div>
     </div>
 );
+
+const ManagerReceivablesWidget = ({ userId, projects, transactions }: any) => {
+    const received = transactions
+        .filter((t: any) => t.payeeId === userId && t.type === TransactionType.Income && t.status === 'Approved')
+        .reduce((sum: number, t: any) => sum + Number(t.amount || 0), 0);
+
+    const totalAllocated = projects.reduce((sum: number, p: any) => {
+        const alloc = Number((p.memberAllocations || {})[userId] || 0);
+        const budget = Number(p.totalBudget || p.budget?.total || 0);
+        return sum + (alloc > 0 ? (alloc / 100) * budget : 0);
+    }, 0);
+
+    const outstanding = Math.max(0, totalAllocated - received);
+
+    return (
+        <div className="bg-white dark:bg-slate-800 rounded-[32px] border border-gray-100 dark:border-slate-700 shadow-sm p-6 h-full flex flex-col">
+            <h3 className="font-bold text-gray-800 dark:text-white flex items-center gap-2 mb-6">
+                <DollarSign size={20} className="text-emerald-500"/> دریافت‌ها و مطالبات من
+            </h3>
+            <div className="grid grid-cols-3 gap-4 mb-6">
+                <div className="bg-emerald-50 dark:bg-emerald-900/20 p-4 rounded-2xl text-center">
+                    <p className="text-[10px] text-emerald-600 font-bold mb-1">دریافتی</p>
+                    <p className="text-lg font-black text-emerald-700 dark:text-emerald-300">{formatCurrency(received)}</p>
+                </div>
+                <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-2xl text-center">
+                    <p className="text-[10px] text-blue-600 font-bold mb-1">کل سهم</p>
+                    <p className="text-lg font-black text-blue-700 dark:text-blue-300">{formatCurrency(totalAllocated)}</p>
+                </div>
+                <div className="bg-amber-50 dark:bg-amber-900/20 p-4 rounded-2xl text-center">
+                    <p className="text-[10px] text-amber-600 font-bold mb-1">مانده مطالبه</p>
+                    <p className="text-lg font-black text-amber-700 dark:text-amber-300">{formatCurrency(outstanding)}</p>
+                </div>
+            </div>
+            <div className="flex-1 space-y-3 overflow-y-auto">
+                {projects.filter((p: any) => (p.memberAllocations || {})[userId] > 0).length === 0 ? (
+                    <div className="text-center text-gray-400 py-8 text-xs">سهم مالی برای شما در پروژه‌ها تعریف نشده است.</div>
+                ) : projects.filter((p: any) => (p.memberAllocations || {})[userId] > 0).map((p: any) => {
+                    const pct = Number((p.memberAllocations || {})[userId] || 0);
+                    const budget = Number(p.totalBudget || p.budget?.total || 0);
+                    const myShare = (pct / 100) * budget;
+                    const paidToMe = transactions
+                        .filter((t: any) => t.payeeId === userId && t.projectId === p.id && t.type === TransactionType.Income && t.status === 'Approved')
+                        .reduce((s: number, t: any) => s + Number(t.amount || 0), 0);
+                    const remaining = Math.max(0, myShare - paidToMe);
+                    return (
+                        <div key={p.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-900/50 rounded-xl border border-gray-100 dark:border-slate-700">
+                            <div>
+                                <p className="text-xs font-bold text-gray-800 dark:text-gray-200">{p.title}</p>
+                                <p className="text-[10px] text-gray-400">{toPersianDigits(pct)}٪ از بودجه</p>
+                            </div>
+                            <div className="text-left">
+                                <p className="text-xs font-bold text-emerald-600">+{formatCurrency(paidToMe)}</p>
+                                {remaining > 0 && <p className="text-[10px] text-amber-500">مانده: {formatCurrency(remaining)}</p>}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+};
 
 const FinancialForecastWidget = ({ projects, invoices, transactions }: any) => {
     const [loading, setLoading] = useState(true);
@@ -1400,6 +1465,7 @@ const AdminDashboard = ({ clients, projects, transactions, tasks, invoices, user
         return DEFAULT_LAYOUT;
     });
     const isAdmin = user.role === UserRole.Admin;
+    const isManager = user.role === UserRole.Manager;
 
     useEffect(() => { localStorage.setItem(`dashboard_layout_${user.id}`, JSON.stringify(layout)); }, [layout, user.id]);
 
@@ -1407,23 +1473,35 @@ const AdminDashboard = ({ clients, projects, transactions, tasks, invoices, user
     const activeTasks = myTasks.filter((t: any) => !t.isDone);
     const displayTasks = myTasks.filter((t: any) => activeTaskTab === 'Active' ? !t.isDone : t.isDone);
     const overdueTasks = activeTasks.filter((t: any) => t.deadline && new Date(t.deadline) < new Date());
-    const nearDeadlineProjects = projects.filter((p: any) => {
+
+    // For managers: restrict to projects they're a member of
+    const scopedProjects = isManager ? projects.filter((p: any) => p.members?.includes(user.id)) : projects;
+
+    const nearDeadlineProjects = scopedProjects.filter((p: any) => {
         if (p.status !== 'Active' || !p.deadline) return false;
         const diff = daysBetween(new Date(), new Date(p.deadline));
         return diff <= (p.deadlineWarningDays || 3) && new Date(p.deadline) >= new Date();
     });
-    const overdueProjects = projects.filter((p: any) => p.status === 'Active' && p.deadline && new Date(p.deadline) < new Date());
+    const overdueProjects = scopedProjects.filter((p: any) => p.status === 'Active' && p.deadline && new Date(p.deadline) < new Date());
     const unpaidInvoices = invoices.filter((i: any) =>
         ['ارسال‌شده', 'دیده‌شده', 'تأییدشده', 'معوق', 'خطا'].includes(i.status) &&
         (Number(i.finalAmount) > 0 || Number(i.totalAmount) > 0)
     );
     const fin = calculateDashboardFinancials(projects, invoices, transactions, clients);
-    
+
+    // Manager's own financial totals (money paid to them / expenses they recorded)
+    const managerIncome = transactions
+        .filter((t: any) => t.payeeId === user.id && t.type === TransactionType.Income && t.status === 'Approved')
+        .reduce((sum: number, t: any) => sum + Number(t.amount || 0), 0);
+    const managerExpense = transactions
+        .filter((t: any) => t.createdBy === user.id && t.type === TransactionType.Expense && t.status === 'Approved')
+        .reduce((sum: number, t: any) => sum + Number(t.amount || 0), 0);
+
     // We keep these for the chart or widget props, but pass central numbers
-    const incomeThisMonth = fin.actualReceived;
-    const expenseThisMonth = fin.currentExpense;
+    const incomeThisMonth = isManager ? managerIncome : fin.actualReceived;
+    const expenseThisMonth = isManager ? managerExpense : fin.currentExpense;
     const netProfit = fin.netProfit;
-    const incomeLastMonth = 0; // Not fully relevant now, or could compute all-time
+    const incomeLastMonth = 0;
     const expenseLastMonth = 0;
     let healthScore = 100;
     healthScore -= (overdueTasks.length * 5);
@@ -1488,20 +1566,25 @@ const AdminDashboard = ({ clients, projects, transactions, tasks, invoices, user
     const onResize = (id: string, newColSpan: number) => { saveToHistory(); setLayout(prev => prev.map(item => item.id === id ? { ...item, colSpan: newColSpan } : item)); };
 
     const renderWidget = (item: WidgetLayout) => {
+        // Manager-hidden widgets: sensitive agency-wide financial & personnel data
+        if (isManager && ['activity', 'finance-summary', 'kpi-4'].includes(item.id)) return null;
+
         switch(item.id) {
             case 'hero': return <HeroWidget {...{ healthStatus, activeTasks, overdueProjects, nearDeadlineProjects, unpaidInvoices, navigate, getHeroMessage, getHeroGradient }} />;
-            case 'kpi-1': return <KpiCard title="دریافتی کل (واقعی)" value={incomeThisMonth} prevValue={incomeLastMonth} icon={TrendingUp} colorTheme="emerald" />;
-            case 'kpi-2': return <KpiCard title="هزینه کل (واقعی)" value={expenseThisMonth} prevValue={expenseLastMonth} icon={DollarSign} colorTheme="red" />;
-            case 'kpi-3': return <KpiCard title="پروژه‌های فعال" value={projects.filter((p: any) => p.status === 'Active').length} prevValue={projects.length} icon={Target} colorTheme="blue" />;
+            case 'kpi-1': return <KpiCard title={isManager ? "دریافتی من از آژانس" : "دریافتی کل (واقعی)"} value={incomeThisMonth} prevValue={incomeLastMonth} icon={TrendingUp} colorTheme="emerald" />;
+            case 'kpi-2': return <KpiCard title={isManager ? "هزینه‌های ثبت‌شده من" : "هزینه کل (واقعی)"} value={expenseThisMonth} prevValue={expenseLastMonth} icon={DollarSign} colorTheme="red" />;
+            case 'kpi-3': return <KpiCard title="پروژه‌های فعال" value={scopedProjects.filter((p: any) => p.status === 'Active').length} prevValue={scopedProjects.length} icon={Target} colorTheme="blue" />;
             case 'kpi-4': return <KpiCard title="مشتریان" value={clients.length} prevValue={clients.length - 1} icon={Briefcase} colorTheme="violet" />;
             case 'tasks': return <TasksWidget {...{ displayTasks, activeTaskTab, setActiveTaskTab, handleToggleTask, handleDeleteTask }} />;
-            case 'risks': return <RisksWidget {...{ nearDeadlineProjects, overdueProjects, overdueTasks, unpaidInvoices, navigate, daysBetween }} />;
-            case 'finance-chart': return <FinanceChartWidget transactions={transactions} />;
+            case 'risks': return <RisksWidget {...{ nearDeadlineProjects, overdueProjects, overdueTasks, unpaidInvoices: isManager ? [] : unpaidInvoices, navigate, daysBetween }} />;
+            case 'finance-chart': return <FinanceChartWidget transactions={isManager ? transactions.filter((t: any) => t.payeeId === user.id || t.createdBy === user.id) : transactions} />;
             case 'finance-summary': return <FinanceSummaryWidget {...{ netProfit, projects, incomeThisMonth, navigate, incomeLastMonth, expenseLastMonth }} />;
-            case 'financial-forecast': return <FinancialForecastWidget {...{ projects, invoices, transactions }} />;
-            case 'receivables': return <ReceivablesWidget clients={clients} projects={projects} invoices={invoices} transactions={transactions} />;
+            case 'financial-forecast': return <FinancialForecastWidget projects={scopedProjects} invoices={isManager ? invoices.filter((i: any) => scopedProjects.some((p: any) => p.id === i.projectId)) : invoices} transactions={isManager ? transactions.filter((t: any) => t.payeeId === user.id || t.createdBy === user.id) : transactions} />;
+            case 'receivables': return isManager
+                ? <ManagerReceivablesWidget userId={user.id} projects={scopedProjects} transactions={transactions} />
+                : <ReceivablesWidget clients={clients} projects={projects} invoices={invoices} transactions={transactions} />;
             case 'activity': return <ActivityWidget {...{ recentLogs }} />;
-            case 'team-activity': return <TeamActivityWidget {...{ users, projects, tasks }} />;
+            case 'team-activity': return <TeamActivityWidget users={isManager ? users.filter((u: any) => u.id === user.id) : users} projects={scopedProjects} tasks={tasks} />;
             default: return null;
         }
     };

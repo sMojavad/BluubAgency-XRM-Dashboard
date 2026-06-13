@@ -1,5 +1,6 @@
 import { Transaction, TransactionType, LedgerScopeType, LedgerSnapshot, FinanceCategory } from '../types';
 import { api } from './db';
+import { toEnglishDigits } from '../utils';
 
 export interface LedgerFilters {
   dateRange?: { start: string; end: string };
@@ -54,7 +55,10 @@ export const LedgerEngine = {
         scopedTransactions = scopedTransactions.filter(t => t.categoryId === filters.categoryId);
       }
       if (filters.dateRange) {
-        scopedTransactions = scopedTransactions.filter(t => t.date >= filters.dateRange!.start && t.date <= filters.dateRange!.end);
+        scopedTransactions = scopedTransactions.filter(t => {
+          const d = toEnglishDigits(t.date || '');
+          return d >= filters.dateRange!.start && d <= filters.dateRange!.end;
+        });
       }
     }
 

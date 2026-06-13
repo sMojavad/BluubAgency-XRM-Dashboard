@@ -2,10 +2,10 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { api } from '../services/db';
 import { AuthContext } from '../AuthContext';
-import { Project, ProjectStatus, Client, User, PaymentMethod, UserRole, Notification, Transaction, TransactionType, FinanceCategory, Invoice, TransactionStatus, LedgerSnapshot } from '../types';
+import { Project, ProjectStatus, Client, User, PaymentMethod, UserRole, Notification, Transaction, TransactionType, FinanceCategory, Invoice, TransactionStatus, LedgerSnapshot, ProjectFile } from '../types';
 import { LedgerSnapshotService } from '../services/ledger';
 import { generateId, toPersianDigits, formatCurrency, formatJalali, getStatusColor, calculateShare, calculateProjectHealth, ProjectHealth, calculateProjectFinancials } from '../utils';
-import { Plus, Filter, Calendar, DollarSign, Edit, Trash, Users, Bell, TrendingUp, TrendingDown, Wallet, PieChart, FileText, Link, Check } from 'lucide-react';
+import { Plus, Filter, Calendar, DollarSign, Edit, Trash, Users, Bell, TrendingUp, TrendingDown, Wallet, PieChart, FileText, Link, Check, Paperclip, Download, X, StickyNote, Lock, Percent } from 'lucide-react';
 import { Modal, CurrencyInput, JalaliDatePicker } from '../components/Shared';
 
 const getHealthColor = (status: ProjectHealth['status']) => {
@@ -52,6 +52,10 @@ const ProjectsView = () => {
   
   // New state for sending notification
   const [notifyMembers, setNotifyMembers] = useState(true);
+
+  // Notes and files UI state
+  const [activeNoteTab, setActiveNoteTab] = useState<'public' | 'personal'>('public');
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   // Access Control
   const isClient = user?.role === UserRole.ClientUser || user?.role === UserRole.ConnectionUser;
@@ -236,11 +240,14 @@ const ProjectsView = () => {
       setIsModalOpen(false);
       // Reset
       setFormData({
-        title: '', description: '', status: ProjectStatus.Active, 
+        title: '', description: '', status: ProjectStatus.Active,
         projectType: 'Web', sourceType: 'Client', deadlineWarningDays: 3, totalBudget: 0, connectionSharePercent: 0,
-        members: [], memberAllocations: {}, paymentMethod: PaymentMethod.Cash, installments: [], linkedInvoiceId: undefined
+        members: [], memberAllocations: {}, memberCostAllocations: {}, teamCostPercent: 0,
+        paymentMethod: PaymentMethod.Cash, installments: [], linkedInvoiceId: undefined,
+        publicNotes: '', personalNotes: {}, projectFiles: []
       });
       setNotifyMembers(true);
+      setActiveNoteTab('public');
       // Reload to see new transactions if any (Optional now since we sync locally, but good for safety)
       // loadData(); 
     } catch (e) {
@@ -291,6 +298,45 @@ const ProjectsView = () => {
   };
 
   const connectionShareAmount = calculateShare(formData.totalBudget || 0, formData.connectionSharePercent || 0);
+
+  // Non-admin members for cost allocation
+  const nonAdminMembers = (formData.members || [])
+      .map(id => users.find(u => u.id === id))
+      .filter((u): u is User => !!u && u.role !== UserRole.Admin);
+
+  const distributeTeamCostEvenly = () => {
+      if (nonAdminMembers.length === 0) return;
+      const share = Math.floor(100 / nonAdminMembers.length);
+      const allocations: Record<string, number> = {};
+      nonAdminMembers.forEach((u, i) => {
+          allocations[u.id] = i === nonAdminMembers.length - 1
+              ? 100 - share * (nonAdminMembers.length - 1)
+              : share;
+      });
+      setFormData(prev => ({ ...prev, memberCostAllocations: allocations }));
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(e.target.files || []);
+      files.forEach(file => {
+          if (file.size > 5 * 1024 * 1024) { showToast('فایل نباید بیشتر از ۵MB باشد', 'error'); return; }
+          const reader = new FileReader();
+          reader.onloadend = () => {
+              const newFile: ProjectFile = {
+                  id: generateId(), name: file.name, size: file.size, type: file.type,
+                  dataUrl: reader.result as string, uploadedBy: user!.id,
+                  uploadedAt: new Date().toISOString()
+              };
+              setFormData(prev => ({ ...prev, projectFiles: [...(prev.projectFiles || []), newFile] }));
+          };
+          reader.readAsDataURL(file);
+      });
+      if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const removeProjectFile = (fileId: string) => {
+      setFormData(prev => ({ ...prev, projectFiles: (prev.projectFiles || []).filter(f => f.id !== fileId) }));
+  };
 
   // --- P&L CALCULATOR HELPER (FIXED BUG #1) ---
   const calculatePnL = (projectId: string) => {
@@ -427,9 +473,16 @@ const ProjectsView = () => {
                   ) : (
                       // ADMIN/TEAM VIEW: Avatars
                       <div className="flex -space-x-2 space-x-reverse">
-                          {project.members?.map(mid => (
-                              <div key={mid} className="w-6 h-6 rounded-full bg-gray-200 border-2 border-white dark:border-slate-700" title={users.find(u=>u.id===mid)?.firstName}></div>
-                          ))}
+                          {project.members?.map(mid => {
+                              const member = users.find(u => u.id === mid);
+                              return member?.avatarUrl ? (
+                                  <img key={mid} src={member.avatarUrl} className="w-6 h-6 rounded-full object-cover border-2 border-white dark:border-slate-700" title={member.firstName} />
+                              ) : (
+                                  <div key={mid} className="w-6 h-6 rounded-full bg-primary-100 dark:bg-primary-900/40 border-2 border-white dark:border-slate-700 flex items-center justify-center text-primary-700 dark:text-primary-300 text-[9px] font-bold" title={member?.firstName}>
+                                      {member?.firstName?.[0] || '?'}
+                                  </div>
+                              );
+                          })}
                       </div>
                   )}
                 </div>
@@ -505,6 +558,38 @@ const ProjectsView = () => {
                               </div>
                           </div>
                       )}
+                  </div>
+              )}
+
+              {/* Public Notes */}
+              {project.publicNotes && (
+                  <div className="bg-blue-50 dark:bg-blue-900/10 rounded-xl p-3 border border-blue-100 dark:border-blue-800 mb-3">
+                      <p className="text-[10px] font-bold text-blue-600 mb-1 flex items-center gap-1"><StickyNote size={10}/> یادداشت پروژه</p>
+                      <p className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap line-clamp-3">{project.publicNotes}</p>
+                  </div>
+              )}
+
+              {/* Personal Notes (only visible to current user) */}
+              {user && project.personalNotes?.[user.id] && (
+                  <div className="bg-amber-50 dark:bg-amber-900/10 rounded-xl p-3 border border-amber-100 dark:border-amber-800 mb-3">
+                      <p className="text-[10px] font-bold text-amber-600 mb-1 flex items-center gap-1"><Lock size={10}/> یادداشت شخصی شما</p>
+                      <p className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap line-clamp-3">{project.personalNotes[user.id]}</p>
+                  </div>
+              )}
+
+              {/* Project Files */}
+              {(project.projectFiles || []).length > 0 && (
+                  <div className="bg-gray-50 dark:bg-slate-900/50 rounded-xl p-3 border border-gray-100 dark:border-slate-700 mb-3">
+                      <p className="text-[10px] font-bold text-gray-500 mb-2 flex items-center gap-1"><Paperclip size={10}/> فایل‌های پروژه ({toPersianDigits((project.projectFiles || []).length)})</p>
+                      <div className="space-y-1.5">
+                          {(project.projectFiles || []).map(f => (
+                              <a key={f.id} href={f.dataUrl} download={f.name}
+                                  className="flex items-center justify-between p-1.5 bg-white dark:bg-slate-800 rounded-lg border border-gray-100 dark:border-slate-700 hover:border-primary-300 transition group">
+                                  <span className="text-[10px] text-gray-600 dark:text-gray-300 truncate">{f.name}</span>
+                                  <Download size={11} className="text-gray-400 group-hover:text-primary-600 shrink-0"/>
+                              </a>
+                          ))}
+                      </div>
                   </div>
               )}
 
@@ -667,11 +752,125 @@ const ProjectsView = () => {
                     </div>
                  </div>
 
+                 {/* ── Team Cost Allocation ── */}
+                 {nonAdminMembers.length > 0 && (
+                     <div className="col-span-1 md:col-span-2 bg-violet-50 dark:bg-violet-900/10 p-4 rounded-xl border border-violet-100 dark:border-violet-800">
+                         <div className="flex items-center justify-between mb-3">
+                             <label className="text-sm font-bold text-violet-700 dark:text-violet-300 flex items-center gap-2">
+                                 <Percent size={16}/> تخصیص هزینه نیروها
+                             </label>
+                             <button type="button" onClick={distributeTeamCostEvenly} className="text-xs bg-violet-100 dark:bg-violet-800 text-violet-700 dark:text-violet-300 px-2 py-1 rounded-lg font-bold hover:bg-violet-200 transition">
+                                 توزیع مساوی
+                             </button>
+                         </div>
+                         <div className="flex items-center gap-3 mb-4">
+                             <label className="text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap">درصد هزینه نیروها از بودجه:</label>
+                             <input
+                                 type="number" min="0" max="100"
+                                 className="w-20 px-2 py-1 text-sm border border-violet-200 dark:border-violet-700 rounded-lg bg-white dark:bg-slate-900 outline-none text-center"
+                                 value={formData.teamCostPercent || 0}
+                                 onChange={e => setFormData(prev => ({ ...prev, teamCostPercent: Number(e.target.value) }))}
+                             />
+                             <span className="text-xs text-gray-500">%</span>
+                             {(formData.teamCostPercent || 0) > 0 && (formData.totalBudget || 0) > 0 && (
+                                 <span className="text-xs text-violet-600 font-bold">= {formatCurrency(Math.round(((formData.teamCostPercent || 0) / 100) * (formData.totalBudget || 0)))} تومان</span>
+                             )}
+                         </div>
+                         <div className="space-y-2">
+                             {nonAdminMembers.map(u => {
+                                 const pct = (formData.memberCostAllocations || {})[u.id] || 0;
+                                 const amount = (formData.teamCostPercent || 0) > 0 && (formData.totalBudget || 0) > 0
+                                     ? Math.round((pct / 100) * ((formData.teamCostPercent || 0) / 100) * (formData.totalBudget || 0))
+                                     : 0;
+                                 return (
+                                     <div key={u.id} className="flex items-center gap-3">
+                                         <span className="text-xs text-gray-700 dark:text-gray-300 w-28 truncate">{u.firstName} {u.lastName}</span>
+                                         <input
+                                             type="number" min="0" max="100"
+                                             className="w-16 px-2 py-1 text-xs border border-violet-200 dark:border-violet-700 rounded-lg bg-white dark:bg-slate-900 outline-none text-center"
+                                             value={pct}
+                                             onChange={e => setFormData(prev => ({
+                                                 ...prev,
+                                                 memberCostAllocations: { ...(prev.memberCostAllocations || {}), [u.id]: Number(e.target.value) }
+                                             }))}
+                                         />
+                                         <span className="text-xs text-gray-400">%</span>
+                                         {amount > 0 && <span className="text-xs text-violet-600">{formatCurrency(amount)} تومان</span>}
+                                     </div>
+                                 );
+                             })}
+                         </div>
+                     </div>
+                 )}
+
+                 {/* ── Notes (public + personal) ── */}
+                 <div className="col-span-1 md:col-span-2">
+                     <div className="flex gap-2 mb-2">
+                         <button type="button" onClick={() => setActiveNoteTab('public')}
+                             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition ${activeNoteTab === 'public' ? 'bg-primary-600 text-white' : 'bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-gray-300'}`}>
+                             <StickyNote size={13}/> یادداشت پروژه
+                         </button>
+                         <button type="button" onClick={() => setActiveNoteTab('personal')}
+                             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition ${activeNoteTab === 'personal' ? 'bg-amber-500 text-white' : 'bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-gray-300'}`}>
+                             <Lock size={13}/> یادداشت شخصی
+                         </button>
+                     </div>
+                     {activeNoteTab === 'public' ? (
+                         <textarea
+                             rows={4}
+                             placeholder="یادداشت‌های پروژه که برای همه اعضا قابل مشاهده است..."
+                             className="w-full px-4 py-3 rounded-xl bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 outline-none text-sm resize-none"
+                             value={formData.publicNotes || ''}
+                             onChange={e => setFormData(prev => ({ ...prev, publicNotes: e.target.value }))}
+                         />
+                     ) : (
+                         <div>
+                             <p className="text-[10px] text-amber-600 mb-2 flex items-center gap-1"><Lock size={10}/> فقط شما می‌توانید این یادداشت را ببینید</p>
+                             <textarea
+                                 rows={4}
+                                 placeholder="یادداشت شخصی شما (مخفی از سایرین)..."
+                                 className="w-full px-4 py-3 rounded-xl bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800 outline-none text-sm resize-none"
+                                 value={(formData.personalNotes || {})[user!.id] || ''}
+                                 onChange={e => setFormData(prev => ({
+                                     ...prev,
+                                     personalNotes: { ...(prev.personalNotes || {}), [user!.id]: e.target.value }
+                                 }))}
+                             />
+                         </div>
+                     )}
+                 </div>
+
+                 {/* ── File Attachments ── */}
+                 <div className="col-span-1 md:col-span-2">
+                     <label className="block text-sm font-bold mb-2 flex items-center gap-2"><Paperclip size={15}/> فایل‌های پروژه</label>
+                     <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileUpload} />
+                     <button type="button" onClick={() => fileInputRef.current?.click()}
+                         className="w-full py-3 border-2 border-dashed border-gray-200 dark:border-slate-600 rounded-xl text-sm text-gray-500 hover:border-primary-400 hover:text-primary-600 transition flex items-center justify-center gap-2">
+                         <Paperclip size={16}/> انتخاب فایل (حداکثر ۵MB هر فایل)
+                     </button>
+                     {(formData.projectFiles || []).length > 0 && (
+                         <div className="mt-2 space-y-2">
+                             {(formData.projectFiles || []).map(f => (
+                                 <div key={f.id} className="flex items-center justify-between p-2 bg-gray-50 dark:bg-slate-900 rounded-lg border border-gray-100 dark:border-slate-700">
+                                     <div className="flex items-center gap-2 min-w-0">
+                                         <Paperclip size={14} className="text-gray-400 shrink-0"/>
+                                         <span className="text-xs font-medium truncate">{f.name}</span>
+                                         <span className="text-[10px] text-gray-400 shrink-0">({Math.round(f.size / 1024)}KB)</span>
+                                     </div>
+                                     <button type="button" onClick={() => removeProjectFile(f.id)} className="text-red-400 hover:text-red-600 p-1 shrink-0">
+                                         <X size={14}/>
+                                     </button>
+                                 </div>
+                             ))}
+                         </div>
+                     )}
+                 </div>
+
                  {!formData.id && (
                      <div className="col-span-1 md:col-span-2">
                          <label className="flex items-center gap-2 p-2 bg-gray-50 dark:bg-slate-900 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-800 transition">
-                             <input 
-                                type="checkbox" 
+                             <input
+                                type="checkbox"
                                 className="w-5 h-5 rounded text-primary-600 focus:ring-primary-500"
                                 checked={notifyMembers}
                                 onChange={e => setNotifyMembers(e.target.checked)}

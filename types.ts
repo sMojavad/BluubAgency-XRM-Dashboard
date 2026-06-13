@@ -135,11 +135,32 @@ export interface Project {
   connectionSharePercent: number;
   
   members: string[]; // User IDs
-  memberAllocations: Record<string, number>; 
-  
+  memberAllocations: Record<string, number>;
+
+  // Team cost allocation
+  teamCostPercent?: number; // % of project budget allocated to team labor
+  memberCostAllocations?: Record<string, number>; // userId → % of teamCostPercent share
+
+  // Notes
+  publicNotes?: string; // visible to all project members
+  personalNotes?: Record<string, string>; // userId → private note (only visible to that user)
+
+  // File attachments
+  projectFiles?: ProjectFile[];
+
   createdAt: string;
   completedAt?: string;
   deletedAt?: string | null;
+}
+
+export interface ProjectFile {
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  dataUrl: string; // base64
+  uploadedBy: string; // userId
+  uploadedAt: string;
 }
 
 // --- ACCOUNTING / FINANCE TYPES (UPDATED V1) ---
