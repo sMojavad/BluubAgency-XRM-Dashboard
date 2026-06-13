@@ -265,6 +265,10 @@ export interface Transaction {
   createdBy?: string;    // userId of creator
   visibleTo?: string[];  // userIds that can see this (empty = only Admin/creator)
 
+  // Manager-to-Admin approval flow
+  requestAdminApproval?: boolean;                               // Manager flags this for agency-wide accounting
+  adminApprovalStatus?: 'Pending' | 'Approved' | 'Rejected';   // Admin's response
+
   createdAt: string;
   updatedAt?: string;
 }

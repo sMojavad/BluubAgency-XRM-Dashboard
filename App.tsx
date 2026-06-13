@@ -113,7 +113,8 @@ const Sidebar = ({ user, settings, unreadMessages, isSidebarOpen, setIsSidebarOp
       if (role === UserRole.TeamMember) {
           if (item.id === 'dashboard') label = 'داشبورد من';
           if (item.id === 'projects') label = 'پروژه‌های من';
-          if (item.id === 'team' || item.id === 'clients' || item.id === 'finance' || item.id === 'settings' || item.id === 'invoices') {
+          if (item.id === 'finance') label = 'حسابداری من';
+          if (item.id === 'team' || item.id === 'clients' || item.id === 'settings' || item.id === 'invoices') {
               isVisible = false;
           }
       }

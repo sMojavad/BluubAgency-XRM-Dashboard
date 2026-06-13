@@ -124,7 +124,9 @@ const FinanceView = () => {
 
   // RBAC Helper
   const isSuperAdmin = user?.role === UserRole.Admin;
-  
+  const isManager = user?.role === UserRole.Manager;
+  const isTeamMember = user?.role === UserRole.TeamMember;
+
   const checkMutationPermission = (t: Transaction): boolean => {
       // Guard for Final Confirmation: Only Admin can mutate 'Approved'
       if (t.status === 'Approved') {
@@ -150,6 +152,7 @@ const FinanceView = () => {
   }, []);
 
   const [confirmSubmitApprove, setConfirmSubmitApprove] = useState(false);
+  const [requestAdminApproval, setRequestAdminApproval] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [formData, setFormData] = useState<Partial<Transaction>>({
@@ -300,8 +303,12 @@ const FinanceView = () => {
           if (activeTab === FinanceCategory.Personal) {
               // Personal tab: only own personal transactions
               data = data.filter(t => t.createdBy === uid);
+          } else if (isTeamMember) {
+              // Agency tab for TeamMembers: only transactions where agency paid them (payeeId)
+              data = data.filter(t => t.payeeId === uid);
           } else {
-              // Agency/Ledger: transactions explicitly shared OR created by this user
+              // Manager/others: transactions they created OR shared with them
+              // Exclude manager-flagged transactions from their own view unless admin approved
               data = data.filter(t =>
                   t.createdBy === uid ||
                   (t.visibleTo && t.visibleTo.includes(uid))
@@ -428,13 +435,30 @@ const FinanceView = () => {
           }
           ledFilters.financeCategory = activeTab === 'Ledger' ? FinanceCategory.Agency : activeTab;
 
-          const result = await LedgerEngine.compute('global', 'all', ledFilters);
-          setSummaryStats({
-              income: result.totalIncomeConfirmed,
-              expense: result.totalExpenseConfirmed,
-              net: result.netProfitConfirmed,
-              label
-          });
+          if (isSuperAdmin) {
+              const result = await LedgerEngine.compute('global', 'all', ledFilters);
+              setSummaryStats({
+                  income: result.totalIncomeConfirmed,
+                  expense: result.totalExpenseConfirmed,
+                  net: result.netProfitConfirmed,
+                  label
+              });
+          } else {
+              // Compute from already-filtered transactions for non-admins
+              const uid = user?.id || '';
+              let scopedTx = transactions.filter(t => (t.category || FinanceCategory.Agency) === (activeTab === 'Ledger' ? FinanceCategory.Agency : activeTab));
+              if (isTeamMember) {
+                  scopedTx = scopedTx.filter(t => activeTab === FinanceCategory.Personal ? t.createdBy === uid : t.payeeId === uid);
+              } else {
+                  scopedTx = scopedTx.filter(t => t.createdBy === uid || (t.visibleTo && t.visibleTo.includes(uid)));
+              }
+              if (start && end) scopedTx = scopedTx.filter(t => { const d = formatJalaliShort(t.date); return d >= start && d <= end; });
+              if (filterType !== 'All') scopedTx = scopedTx.filter(t => t.type === (filterType === 'Income' ? TransactionType.Income : TransactionType.Expense));
+              const approvedTx = scopedTx.filter(t => t.status === 'Approved');
+              const inc = approvedTx.filter(t => t.type === TransactionType.Income).reduce((s, t) => s + Number(t.amount || 0), 0);
+              const exp = approvedTx.filter(t => t.type === TransactionType.Expense).reduce((s, t) => s + Number(t.amount || 0), 0);
+              setSummaryStats({ income: inc, expense: exp, net: inc - exp, label });
+          }
       };
 
       fetchSummary();
@@ -563,6 +587,7 @@ const FinanceView = () => {
   const resetForm = () => {
       setFormData({ type: TransactionType.Income, amount: 0, status: 'Registered', paymentMethod: 'Card', attachments: [], projectId: undefined, clientId: undefined, invoiceId: undefined, partialPayments: [], installmentTotal: undefined, payeeId: undefined, payeeName: undefined, sequenceNo: undefined });
       setSelectedParentCat(''); setShowPartialPaymentForm(false); setIsEditingInstallmentCount(false); setEditingPaymentId(null); setEditPaymentData({});
+      setRequestAdminApproval(false);
   };
 
   const processTransaction = async () => {
@@ -604,6 +629,8 @@ const FinanceView = () => {
                   payeeName: finalData.type === TransactionType.Expense ? finalData.payeeName : undefined,
                   createdBy: user!.id,
                   visibleTo: finalData.visibleTo || [],
+                  requestAdminApproval: isManager && requestAdminApproval ? true : undefined,
+                  adminApprovalStatus: isManager && requestAdminApproval ? 'Pending' : undefined,
               } as Transaction;
 
               if (finalData.invoiceId && finalData.installmentTotal && finalData.type === TransactionType.Income) {
@@ -883,8 +910,21 @@ const FinanceView = () => {
                                    {t.category === FinanceCategory.Personal ? 'شخصی' : 'آژانس'}
                                </span>
                            )}
+
+                           {/* Admin-approval request badge */}
+                           {t.requestAdminApproval && (
+                               <span className={`inline-flex items-center gap-1 text-[9px] px-2 py-0.5 rounded-full font-bold border shrink-0 ${
+                                   t.adminApprovalStatus === 'Approved' ? 'bg-emerald-50 text-emerald-600 border-emerald-200' :
+                                   t.adminApprovalStatus === 'Rejected' ? 'bg-red-50 text-red-500 border-red-200' :
+                                   'bg-orange-50 text-orange-600 border-orange-200'
+                               }`}>
+                                   {t.adminApprovalStatus === 'Approved' ? '✓ تأیید مدیرکل' :
+                                    t.adminApprovalStatus === 'Rejected' ? '✗ رد شده' :
+                                    '⏳ در انتظار مدیرکل'}
+                               </span>
+                           )}
                        </div>
-                       
+
                        <RenderRelationChips t={t} isChild={isChild} />
                    </div>
                </td>
@@ -930,8 +970,24 @@ const FinanceView = () => {
 
                <td className={`border-y border-gray-100 dark:border-slate-700 p-4 text-center align-middle w-16 ${isChild ? '' : 'rounded-l-2xl'}`}>
                    <div className="flex justify-center items-center gap-2 opacity-0 translate-y-2 pointer-events-none group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto transition-all duration-200 ease-out">
+                       {/* Admin approve/reject for manager-flagged transactions */}
+                       {isSuperAdmin && t.requestAdminApproval && t.adminApprovalStatus === 'Pending' && (
+                           <>
+                               <button
+                                   onClick={async (e) => { e.stopPropagation(); const updated = { ...t, adminApprovalStatus: 'Approved' as const }; await api.transactions.update(updated); setTransactions(prev => prev.map(tx => tx.id === t.id ? updated : tx)); showToast('تراکنش تأیید شد', 'success'); }}
+                                   className="p-2 rounded-xl text-emerald-600 bg-emerald-50 hover:bg-emerald-100 transition shadow-sm active:scale-95"
+                                   title="تأیید درخواست مدیر"
+                               ><Check size={15} strokeWidth={3}/></button>
+                               <button
+                                   onClick={async (e) => { e.stopPropagation(); const updated = { ...t, adminApprovalStatus: 'Rejected' as const }; await api.transactions.update(updated); setTransactions(prev => prev.map(tx => tx.id === t.id ? updated : tx)); showToast('درخواست رد شد', 'error'); }}
+                                   className="p-2 rounded-xl text-red-500 bg-red-50 hover:bg-red-100 transition shadow-sm active:scale-95"
+                                   title="رد درخواست مدیر"
+                               ><XCircle size={15}/></button>
+                           </>
+                       )}
+
                        {canEdit && !isCancelled && (
-                           <button 
+                           <button
                                onClick={(e) => handleEditTransaction(e, t)}
                                className="p-2 rounded-xl text-blue-500 hover:bg-blue-50 transition shadow-sm active:scale-95"
                                title="ویرایش"
@@ -944,8 +1000,8 @@ const FinanceView = () => {
                            isSuperAdmin && <button onClick={(e) => initiateRestore(e, t)} className="p-2 rounded-xl text-blue-500 bg-blue-50 hover:bg-blue-100 transition shadow-sm active:scale-95" title="بازگردانی"><RotateCcw size={16}/></button>
                        ) : (
                            canCancel && (
-                               <button 
-                                onClick={(e) => initiateCancel(e, t)} 
+                               <button
+                                onClick={(e) => initiateCancel(e, t)}
                                 className={`p-2 rounded-xl transition active:scale-95 text-gray-400 hover:text-red-500 hover:bg-red-50`}
                                 title="لغو تراکنش"
                                >
@@ -1608,6 +1664,22 @@ const FinanceView = () => {
                                )}
                            </div>
                        )}
+                   </div>
+               )}
+
+               {/* Manager: send to admin for agency-wide approval */}
+               {isManager && activeTab === FinanceCategory.Agency && (
+                   <div
+                       onClick={() => setRequestAdminApproval(v => !v)}
+                       className={`flex items-center justify-between gap-3 p-4 rounded-2xl border-2 cursor-pointer transition select-none ${requestAdminApproval ? 'border-primary-400 bg-primary-50 dark:bg-primary-900/20' : 'border-gray-200 dark:border-slate-700 hover:border-primary-200'}`}
+                   >
+                       <div>
+                           <p className="text-sm font-bold text-gray-800 dark:text-gray-200">ارسال برای تأیید مدیرکل</p>
+                           <p className="text-[11px] text-gray-400 mt-0.5">پس از تأیید، این تراکنش وارد حسابداری کل آژانس می‌شود</p>
+                       </div>
+                       <div className={`w-12 h-6 rounded-full transition relative shrink-0 ${requestAdminApproval ? 'bg-primary-500' : 'bg-gray-300 dark:bg-slate-600'}`}>
+                           <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-all ${requestAdminApproval ? 'right-1' : 'left-1'}`}/>
+                       </div>
                    </div>
                )}
 

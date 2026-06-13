@@ -584,9 +584,13 @@ const ManagerReceivablesWidget = ({ userId, projects, transactions }: any) => {
         .reduce((sum: number, t: any) => sum + Number(t.amount || 0), 0);
 
     const totalAllocated = projects.reduce((sum: number, p: any) => {
-        const alloc = Number((p.memberAllocations || {})[userId] || 0);
         const budget = Number(p.totalBudget || p.budget?.total || 0);
-        return sum + (alloc > 0 ? (alloc / 100) * budget : 0);
+        const teamCostPct = Number(p.teamCostPercent || 0);
+        const memberSharePct = Number((p.memberCostAllocations || {})[userId] || 0);
+        if (teamCostPct > 0 && memberSharePct > 0) {
+            return sum + Math.round((teamCostPct / 100) * budget * (memberSharePct / 100));
+        }
+        return sum + Number((p.memberAllocations || {})[userId] || 0);
     }, 0);
 
     const outstanding = Math.max(0, totalAllocated - received);
@@ -611,12 +615,29 @@ const ManagerReceivablesWidget = ({ userId, projects, transactions }: any) => {
                 </div>
             </div>
             <div className="flex-1 space-y-3 overflow-y-auto">
-                {projects.filter((p: any) => (p.memberAllocations || {})[userId] > 0).length === 0 ? (
+                {projects.filter((p: any) => {
+                    const teamCostPct = Number(p.teamCostPercent || 0);
+                    const memberSharePct = Number((p.memberCostAllocations || {})[userId] || 0);
+                    const legacyAlloc = Number((p.memberAllocations || {})[userId] || 0);
+                    return (teamCostPct > 0 && memberSharePct > 0) || legacyAlloc > 0;
+                }).length === 0 ? (
                     <div className="text-center text-gray-400 py-8 text-xs">سهم مالی برای شما در پروژه‌ها تعریف نشده است.</div>
-                ) : projects.filter((p: any) => (p.memberAllocations || {})[userId] > 0).map((p: any) => {
-                    const pct = Number((p.memberAllocations || {})[userId] || 0);
+                ) : projects.filter((p: any) => {
+                    const teamCostPct = Number(p.teamCostPercent || 0);
+                    const memberSharePct = Number((p.memberCostAllocations || {})[userId] || 0);
+                    const legacyAlloc = Number((p.memberAllocations || {})[userId] || 0);
+                    return (teamCostPct > 0 && memberSharePct > 0) || legacyAlloc > 0;
+                }).map((p: any) => {
                     const budget = Number(p.totalBudget || p.budget?.total || 0);
-                    const myShare = (pct / 100) * budget;
+                    const teamCostPct = Number(p.teamCostPercent || 0);
+                    const memberSharePct = Number((p.memberCostAllocations || {})[userId] || 0);
+                    const legacyAlloc = Number((p.memberAllocations || {})[userId] || 0);
+                    const myShare = (teamCostPct > 0 && memberSharePct > 0)
+                        ? Math.round((teamCostPct / 100) * budget * (memberSharePct / 100))
+                        : legacyAlloc;
+                    const shareLabel = (teamCostPct > 0 && memberSharePct > 0)
+                        ? `${toPersianDigits(memberSharePct)}٪ از هزینه تیم`
+                        : `${formatCurrency(legacyAlloc)} تومان`;
                     const paidToMe = transactions
                         .filter((t: any) => t.payeeId === userId && t.projectId === p.id && t.type === TransactionType.Income && t.status === 'Approved')
                         .reduce((s: number, t: any) => s + Number(t.amount || 0), 0);
@@ -625,7 +646,7 @@ const ManagerReceivablesWidget = ({ userId, projects, transactions }: any) => {
                         <div key={p.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-900/50 rounded-xl border border-gray-100 dark:border-slate-700">
                             <div>
                                 <p className="text-xs font-bold text-gray-800 dark:text-gray-200">{p.title}</p>
-                                <p className="text-[10px] text-gray-400">{toPersianDigits(pct)}٪ از بودجه</p>
+                                <p className="text-[10px] text-gray-400">{shareLabel}</p>
                             </div>
                             <div className="text-left">
                                 <p className="text-xs font-bold text-emerald-600">+{formatCurrency(paidToMe)}</p>
@@ -906,7 +927,7 @@ const TeamActivityWidget = ({ users, projects, tasks }: any) => {
         <div className="bg-white dark:bg-slate-800 rounded-[32px] border border-gray-100 dark:border-slate-700 shadow-sm p-6 h-full flex flex-col">
             <div className="mb-6">
                 <h3 className="font-black text-gray-800 dark:text-white flex items-center gap-2 text-lg">
-                    <UsersIcon size={20} className="text-primary-500 fill-primary-500/20"/> وضعیت فعالیت اعضای تیم
+                    <UsersIcon size={20} className="text-primary-500 fill-primary-500/20"/> {users.length === 1 ? 'وضعیت فعالیت من' : 'وضعیت فعالیت اعضای تیم'}
                 </h3>
                 <p className="text-xs text-gray-400 mt-1">خلاصه‌ای از وضعیت کاری، فعالیت و فشار پروژه‌های اعضای تیم</p>
             </div>
@@ -1122,15 +1143,16 @@ const ClientDashboard = ({ user, projects }: { user: User, projects: Project[] }
 
 // --- TEAM MEMBER DASHBOARD (REDESIGNED BANNER) ---
 
-const TeamMemberDashboard = ({ user, projects, tasks, users }: { user: User, projects: Project[], tasks: Task[], users: User[] }) => {
-    // Copying logic to ensure no regression
+const TeamMemberDashboard = ({ user, projects, tasks, users, transactions }: { user: User, projects: Project[], tasks: Task[], users: User[], transactions: any[] }) => {
     const myProjects = useMemo(() => projects.filter(p => p.members.includes(user.id)), [projects, user.id]);
-    
+
     const stats = useMemo(() => {
         const totalProjects = myProjects.length;
         const activeProjects = myProjects.filter(p => p.status === 'Active').length;
         const completedProjects = myProjects.filter(p => p.status === 'Completed').length;
-        const totalIncome = myProjects.reduce((acc, p) => acc + (p.memberAllocations?.[user.id] || 0), 0);
+        const totalIncome = (transactions || [])
+            .filter((t: any) => t.payeeId === user.id && t.type === TransactionType.Income && t.status === 'Approved')
+            .reduce((sum: number, t: any) => sum + Number(t.amount || 0), 0);
         let totalDays = 0;
         myProjects.forEach(p => {
             const start = p.startDate ? new Date(p.startDate) : new Date(p.createdAt);
@@ -1194,16 +1216,27 @@ const TeamMemberDashboard = ({ user, projects, tasks, users }: { user: User, pro
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                <KpiCard title="درآمد کسب شده" value={stats.totalIncome} prevValue={0} icon={Wallet} colorTheme="emerald" subText="سهم شما از پروژه‌ها"/>
+            {/* KPI Row - priority: income, projects, tasks, collaboration */}
+            <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <KpiCard title="دریافتی من از آژانس" value={stats.totalIncome} prevValue={0} icon={Wallet} colorTheme="emerald" subText="مجموع تراکنش‌های تأییدشده"/>
                 <KpiCard title="پروژه‌های من" value={stats.totalProjects} prevValue={0} icon={Briefcase} colorTheme="blue" subText={`${toPersianDigits(stats.activeProjects)} فعال | ${toPersianDigits(stats.completedProjects)} تکمیل`}/>
-                <KpiCard title="میانگین زمان پروژه" value={`${toPersianDigits(stats.avgDuration)} روز`} prevValue={0} icon={Clock} colorTheme="amber" subText="مدت زمان همکاری"/>
+                <KpiCard title="تسک‌های باز" value={tasks.filter(t => (t.assignedTo === user.id) && !t.isDone).length} prevValue={0} icon={Clock} colorTheme="amber" subText="در انتظار انجام"/>
                 <KpiCard title="شبکه همکاری" value={stats.uniqueCollaborators} prevValue={0} icon={UsersIcon} colorTheme="violet" subText="همکاران منحصر به فرد"/>
             </div>
-            <div className="grid grid-cols-1 gap-6">
-                 <div className="h-[500px]">
-                    <TasksWidget displayTasks={tasks.filter(t => t.assignedTo === user.id || !t.assignedTo).filter(t => !t.isDone)} activeTaskTab="Active" setActiveTaskTab={() => {}} handleToggleTask={() => {}} handleDeleteTask={() => {}}/>
-                 </div>
+
+            {/* Receivables + Tasks - two-column on desktop */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="h-[420px]">
+                    <ManagerReceivablesWidget userId={user.id} projects={myProjects} transactions={transactions || []} />
+                </div>
+                <div className="h-[420px]">
+                    <TasksWidget displayTasks={tasks.filter(t => t.assignedTo === user.id && !t.isDone)} activeTaskTab="Active" setActiveTaskTab={() => {}} handleToggleTask={() => {}} handleDeleteTask={() => {}}/>
+                </div>
+            </div>
+
+            {/* Team Activity (single member = "وضعیت فعالیت من") */}
+            <div className="h-auto">
+                <TeamActivityWidget users={[user]} projects={myProjects} tasks={tasks} />
             </div>
         </div>
     );
@@ -1489,12 +1522,12 @@ const AdminDashboard = ({ clients, projects, transactions, tasks, invoices, user
     );
     const fin = calculateDashboardFinancials(projects, invoices, transactions, clients);
 
-    // Manager's own financial totals (money paid to them / expenses they recorded)
+    // Manager's own financial totals — exclude requestAdminApproval transactions from KPIs
     const managerIncome = transactions
-        .filter((t: any) => t.payeeId === user.id && t.type === TransactionType.Income && t.status === 'Approved')
+        .filter((t: any) => t.payeeId === user.id && t.type === TransactionType.Income && t.status === 'Approved' && !t.requestAdminApproval)
         .reduce((sum: number, t: any) => sum + Number(t.amount || 0), 0);
     const managerExpense = transactions
-        .filter((t: any) => t.createdBy === user.id && t.type === TransactionType.Expense && t.status === 'Approved')
+        .filter((t: any) => t.createdBy === user.id && t.type === TransactionType.Expense && t.status === 'Approved' && !t.requestAdminApproval)
         .reduce((sum: number, t: any) => sum + Number(t.amount || 0), 0);
 
     // We keep these for the chart or widget props, but pass central numbers
@@ -1567,7 +1600,7 @@ const AdminDashboard = ({ clients, projects, transactions, tasks, invoices, user
 
     const renderWidget = (item: WidgetLayout) => {
         // Manager-hidden widgets: sensitive agency-wide financial & personnel data
-        if (isManager && ['activity', 'finance-summary', 'kpi-4'].includes(item.id)) return null;
+        if (isManager && ['activity', 'finance-summary', 'kpi-4', 'financial-forecast'].includes(item.id)) return null;
 
         switch(item.id) {
             case 'hero': return <HeroWidget {...{ healthStatus, activeTasks, overdueProjects, nearDeadlineProjects, unpaidInvoices, navigate, getHeroMessage, getHeroGradient }} />;
@@ -1674,11 +1707,12 @@ const DashboardView = () => {
 
   if (isTeamMember) {
       return (
-        <TeamMemberDashboard 
-            user={user!} 
-            projects={data.projects} 
-            tasks={data.tasks} 
+        <TeamMemberDashboard
+            user={user!}
+            projects={data.projects}
+            tasks={data.tasks}
             users={data.users}
+            transactions={data.transactions}
         />
       );
   }

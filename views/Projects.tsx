@@ -752,8 +752,23 @@ const ProjectsView = () => {
                     </div>
                  </div>
 
-                 {/* ── Team Cost Allocation ── */}
-                 {nonAdminMembers.length > 0 && (
+                 {/* ── Net Salary Display (30% of budget) — visible to all ── */}
+                 {(formData.totalBudget || 0) > 0 && (
+                     <div className="col-span-1 md:col-span-2 bg-amber-50 dark:bg-amber-900/10 p-3 rounded-xl border border-amber-100 dark:border-amber-800 flex items-center justify-between">
+                         <div>
+                             <p className="text-sm font-bold text-amber-700 dark:text-amber-300 flex items-center gap-2">
+                                 <DollarSign size={14}/> مبلغ خالص دستمزد (۳۰٪ بودجه)
+                             </p>
+                             <p className="text-[11px] text-amber-600/70 mt-0.5">معادل ۳۰ درصد از بودجه کل برای هزینه نیروها</p>
+                         </div>
+                         <span className="text-lg font-black text-amber-800 dark:text-amber-200">
+                             {formatCurrency(Math.round((formData.totalBudget || 0) * 0.30))} <span className="text-xs font-normal">تومان</span>
+                         </span>
+                     </div>
+                 )}
+
+                 {/* ── Team Cost Allocation (Admin only) ── */}
+                 {user?.role === UserRole.Admin && nonAdminMembers.length > 0 && (
                      <div className="col-span-1 md:col-span-2 bg-violet-50 dark:bg-violet-900/10 p-4 rounded-xl border border-violet-100 dark:border-violet-800">
                          <div className="flex items-center justify-between mb-3">
                              <label className="text-sm font-bold text-violet-700 dark:text-violet-300 flex items-center gap-2">
