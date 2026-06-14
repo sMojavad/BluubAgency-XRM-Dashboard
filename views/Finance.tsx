@@ -154,6 +154,13 @@ const FinanceView = () => {
   const [confirmSubmitApprove, setConfirmSubmitApprove] = useState(false);
   const [requestAdminApproval, setRequestAdminApproval] = useState(false);
 
+  // Requests inbox (pending manager→admin approval)
+  const [showRequestsModal, setShowRequestsModal] = useState(false);
+  const [requestsTab, setRequestsTab] = useState<'pending' | 'rejected'>('pending');
+
+  // Trash (soft-deleted cancelled transactions)
+  const [showTrashModal, setShowTrashModal] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [formData, setFormData] = useState<Partial<Transaction>>({
       type: TransactionType.Income,
@@ -295,7 +302,8 @@ const FinanceView = () => {
   const [summaryStats, setSummaryStats] = useState({ income: 0, expense: 0, net: 0, label: '' });
 
   const getTransactionsFiltered = (currentFilters: typeof filters) => {
-      let data = transactions;
+      // Exclude soft-deleted transactions from the main list
+      let data = transactions.filter(t => !t.deletedAt);
 
       // --- GRANULAR ACCESS CONTROL ---
       if (!isSuperAdmin) {
@@ -386,6 +394,14 @@ const FinanceView = () => {
   const filteredTransactions = useMemo(() => {
       return getTransactionsFiltered(filters);
   }, [transactions, activeTab, filters, categories, projects, invoices]);
+
+  const pendingRequestsCount = useMemo(() =>
+      transactions.filter(t => !t.deletedAt && t.requestAdminApproval && t.adminApprovalStatus === 'Pending').length,
+  [transactions]);
+
+  const trashTransactions = useMemo(() =>
+      transactions.filter(t => !!t.deletedAt),
+  [transactions]);
 
   // Fetch summary data directly via LedgerEngine per requirements
   useEffect(() => {
@@ -893,14 +909,20 @@ const FinanceView = () => {
                                </span>
                            )}
 
-                           {/* Creator Badge */}
+                           {/* Creator Badge with avatar */}
                            {t.createdBy && (() => {
                                const creator = users.find(u => u.id === t.createdBy);
                                if (!creator) return null;
                                const isMe = creator.id === user?.id;
                                return (
-                                   <span className={`inline-flex items-center gap-1 text-[9px] px-2 py-0.5 rounded-full font-bold border shrink-0 ${isMe ? 'bg-sky-50 text-sky-600 border-sky-100' : 'bg-violet-50 text-violet-600 border-violet-100'}`}>
-                                       <UserIcon size={9}/> {creator.firstName} {creator.lastName}
+                                   <span className={`inline-flex items-center gap-1.5 text-[9px] px-1.5 py-0.5 rounded-full font-bold border shrink-0 ${isMe ? 'bg-sky-50 text-sky-600 border-sky-100' : 'bg-violet-50 text-violet-600 border-violet-100'}`}>
+                                       <div className="w-4 h-4 rounded-full overflow-hidden flex-shrink-0 bg-gray-200">
+                                           {creator.avatarUrl
+                                               ? <img src={creator.avatarUrl} alt="" className="w-full h-full object-cover"/>
+                                               : <div className="w-full h-full flex items-center justify-center text-[7px] font-black bg-gradient-to-br from-primary-400 to-primary-600 text-white">{creator.firstName?.[0]}</div>
+                                           }
+                                       </div>
+                                       {creator.firstName} {creator.lastName}
                                    </span>
                                );
                            })()}
@@ -926,6 +948,38 @@ const FinanceView = () => {
                        </div>
 
                        <RenderRelationChips t={t} isChild={isChild} />
+
+                       {/* Admin-approval inline action bar — visually separate from transaction approve */}
+                       {isSuperAdmin && t.requestAdminApproval && t.adminApprovalStatus === 'Pending' && (
+                           <div className="mt-2 flex items-center gap-2 p-2 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-xl">
+                               <div className="flex-1 flex items-center gap-1.5">
+                                   <div className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse"/>
+                                   <span className="text-[10px] font-bold text-orange-700 dark:text-orange-300">درخواست تأیید مدیرکل</span>
+                               </div>
+                               <button
+                                   onClick={async (e) => {
+                                       e.stopPropagation();
+                                       const updated = { ...t, adminApprovalStatus: 'Approved' as const };
+                                       await api.transactions.update(updated);
+                                       setTransactions(prev => prev.map(tx => tx.id === t.id ? updated : tx));
+                                       await loadData();
+                                       showToast('تراکنش تأیید شد', 'success');
+                                   }}
+                                   className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500 text-white text-[10px] font-bold hover:bg-emerald-600 transition active:scale-95"
+                               ><Check size={11} strokeWidth={3}/> تأیید</button>
+                               <button
+                                   onClick={async (e) => {
+                                       e.stopPropagation();
+                                       const updated = { ...t, adminApprovalStatus: 'Rejected' as const };
+                                       await api.transactions.update(updated);
+                                       setTransactions(prev => prev.map(tx => tx.id === t.id ? updated : tx));
+                                       await loadData();
+                                       showToast('درخواست رد شد', 'error');
+                                   }}
+                                   className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-500 text-white text-[10px] font-bold hover:bg-red-600 transition active:scale-95"
+                               ><XCircle size={11}/> رد</button>
+                           </div>
+                       )}
                    </div>
                </td>
 
@@ -970,22 +1024,6 @@ const FinanceView = () => {
 
                <td className={`border-y border-gray-100 dark:border-slate-700 p-4 text-center align-middle w-16 ${isChild ? '' : 'rounded-l-2xl'}`}>
                    <div className="flex justify-center items-center gap-2 opacity-0 translate-y-2 pointer-events-none group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto transition-all duration-200 ease-out">
-                       {/* Admin approve/reject for manager-flagged transactions */}
-                       {isSuperAdmin && t.requestAdminApproval && t.adminApprovalStatus === 'Pending' && (
-                           <>
-                               <button
-                                   onClick={async (e) => { e.stopPropagation(); const updated = { ...t, adminApprovalStatus: 'Approved' as const }; await api.transactions.update(updated); setTransactions(prev => prev.map(tx => tx.id === t.id ? updated : tx)); showToast('تراکنش تأیید شد', 'success'); }}
-                                   className="p-2 rounded-xl text-emerald-600 bg-emerald-50 hover:bg-emerald-100 transition shadow-sm active:scale-95"
-                                   title="تأیید درخواست مدیر"
-                               ><Check size={15} strokeWidth={3}/></button>
-                               <button
-                                   onClick={async (e) => { e.stopPropagation(); const updated = { ...t, adminApprovalStatus: 'Rejected' as const }; await api.transactions.update(updated); setTransactions(prev => prev.map(tx => tx.id === t.id ? updated : tx)); showToast('درخواست رد شد', 'error'); }}
-                                   className="p-2 rounded-xl text-red-500 bg-red-50 hover:bg-red-100 transition shadow-sm active:scale-95"
-                                   title="رد درخواست مدیر"
-                               ><XCircle size={15}/></button>
-                           </>
-                       )}
-
                        {canEdit && !isCancelled && (
                            <button
                                onClick={(e) => handleEditTransaction(e, t)}
@@ -997,7 +1035,22 @@ const FinanceView = () => {
                        )}
 
                        {t.status === 'Cancelled' ? (
-                           isSuperAdmin && <button onClick={(e) => initiateRestore(e, t)} className="p-2 rounded-xl text-blue-500 bg-blue-50 hover:bg-blue-100 transition shadow-sm active:scale-95" title="بازگردانی"><RotateCcw size={16}/></button>
+                           <>
+                               {isSuperAdmin && <button onClick={(e) => initiateRestore(e, t)} className="p-2 rounded-xl text-blue-500 bg-blue-50 hover:bg-blue-100 transition shadow-sm active:scale-95" title="بازگردانی"><RotateCcw size={16}/></button>}
+                               {isSuperAdmin && (
+                                   <button
+                                       onClick={async (e) => {
+                                           e.stopPropagation();
+                                           const updated = { ...t, deletedAt: new Date().toISOString() };
+                                           await api.transactions.update(updated);
+                                           await loadData();
+                                           showToast('به سطل زباله منتقل شد', 'success');
+                                       }}
+                                       className="p-2 rounded-xl text-red-400 hover:bg-red-50 hover:text-red-600 transition shadow-sm active:scale-95"
+                                       title="انتقال به سطل زباله"
+                                   ><Trash2 size={16}/></button>
+                               )}
+                           </>
                        ) : (
                            canCancel && (
                                <button
@@ -1398,12 +1451,43 @@ const FinanceView = () => {
                    {activeTab === 'Ledger' ? 'نمای جامع تمام تراکنش‌های ثبت شده در سیستم' : `مدیریت و پیگیری تراکنش‌های ${activeTab === FinanceCategory.Agency ? 'آژانس' : 'شخصی'}`}
                </p>
            </div>
-           <button 
-                onClick={() => { resetForm(); setIsModalOpen(true); }} 
-                className="bg-primary-600 hover:bg-primary-700 transition active:scale-95 text-white px-5 py-3 rounded-2xl flex items-center gap-2 font-bold shadow-lg shadow-primary-500/30"
-            >
-               <Plus size={20} /> ثبت تراکنش
-           </button>
+           <div className="flex items-center gap-2">
+               {isSuperAdmin && (
+                   <>
+                       <button
+                           onClick={() => setShowTrashModal(true)}
+                           className="relative p-3 rounded-2xl border border-gray-200 dark:border-slate-700 text-gray-500 hover:bg-gray-50 dark:hover:bg-slate-800 transition active:scale-95"
+                           title="سطل زباله"
+                       >
+                           <Trash2 size={18}/>
+                           {trashTransactions.length > 0 && (
+                               <span className="absolute -top-1 -left-1 min-w-[18px] h-[18px] bg-red-500 text-white text-[9px] font-black rounded-full flex items-center justify-center px-1">
+                                   {trashTransactions.length}
+                               </span>
+                           )}
+                       </button>
+                       <button
+                           onClick={() => setShowRequestsModal(true)}
+                           className="relative flex items-center gap-2 px-4 py-3 rounded-2xl border border-orange-200 bg-orange-50 dark:bg-orange-900/20 dark:border-orange-800 text-orange-700 dark:text-orange-300 hover:bg-orange-100 dark:hover:bg-orange-900/40 transition active:scale-95 font-bold text-sm"
+                           title="صندوق درخواست‌ها"
+                       >
+                           <Book size={16}/>
+                           صندوق درخواست‌ها
+                           {pendingRequestsCount > 0 && (
+                               <span className="min-w-[20px] h-5 bg-orange-500 text-white text-[10px] font-black rounded-full flex items-center justify-center px-1.5 animate-pulse">
+                                   {pendingRequestsCount}
+                               </span>
+                           )}
+                       </button>
+                   </>
+               )}
+               <button
+                    onClick={() => { resetForm(); setIsModalOpen(true); }}
+                    className="bg-primary-600 hover:bg-primary-700 transition active:scale-95 text-white px-5 py-3 rounded-2xl flex items-center gap-2 font-bold shadow-lg shadow-primary-500/30"
+                >
+                   <Plus size={20} /> ثبت تراکنش
+               </button>
+           </div>
        </div>
 
        {/* CONDITIONAL RENDER: SPLIT VIEW IF ENTITY SELECTED OR LEDGER VIEW */}
@@ -1689,6 +1773,171 @@ const FinanceView = () => {
                </div>
            </form>
         </Modal>
+
+       {/* ─── Requests Inbox Modal ─── */}
+       {showRequestsModal && (
+           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+               <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden">
+                   <div className="flex items-center justify-between p-5 border-b border-gray-100 dark:border-slate-700">
+                       <div className="flex items-center gap-3">
+                           <div className="w-10 h-10 rounded-2xl bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center">
+                               <Book size={18} className="text-orange-600 dark:text-orange-400"/>
+                           </div>
+                           <div>
+                               <h2 className="text-base font-black text-gray-800 dark:text-white">صندوق درخواست‌ها</h2>
+                               <p className="text-xs text-gray-400">درخواست‌های تأیید مدیران</p>
+                           </div>
+                       </div>
+                       <button onClick={() => setShowRequestsModal(false)} className="p-2 rounded-xl text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700 transition">
+                           <X size={20}/>
+                       </button>
+                   </div>
+                   <div className="flex gap-1 p-3 bg-gray-50 dark:bg-slate-900/50 border-b border-gray-100 dark:border-slate-700">
+                       <button
+                           onClick={() => setRequestsTab('pending')}
+                           className={`flex-1 py-2 rounded-xl text-sm font-bold transition flex items-center justify-center gap-2 ${requestsTab === 'pending' ? 'bg-white dark:bg-slate-700 shadow text-orange-600' : 'text-gray-500 hover:text-gray-700'}`}
+                       >
+                           در انتظار تأیید
+                           {pendingRequestsCount > 0 && <span className="px-1.5 py-0.5 bg-orange-500 text-white text-[9px] font-black rounded-full">{pendingRequestsCount}</span>}
+                       </button>
+                       <button
+                           onClick={() => setRequestsTab('rejected')}
+                           className={`flex-1 py-2 rounded-xl text-sm font-bold transition ${requestsTab === 'rejected' ? 'bg-white dark:bg-slate-700 shadow text-red-600' : 'text-gray-500 hover:text-gray-700'}`}
+                       >
+                           رد شده
+                       </button>
+                   </div>
+                   <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                       {(() => {
+                           const items = transactions.filter(t =>
+                               !t.deletedAt &&
+                               t.requestAdminApproval &&
+                               (requestsTab === 'pending' ? t.adminApprovalStatus === 'Pending' : t.adminApprovalStatus === 'Rejected')
+                           );
+                           if (items.length === 0) return (
+                               <div className="text-center py-12 text-gray-400">
+                                   <p className="text-sm">موردی وجود ندارد</p>
+                               </div>
+                           );
+                           return items.map(t => {
+                               const creator = users.find(u => u.id === t.createdBy);
+                               return (
+                                   <div key={t.id} className="bg-gray-50 dark:bg-slate-900 rounded-2xl p-4 border border-gray-100 dark:border-slate-700">
+                                       <div className="flex items-start gap-3">
+                                           <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${t.type === TransactionType.Income ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-500'}`}>
+                                               {t.type === TransactionType.Income ? <ArrowUpCircle size={16}/> : <ArrowDownCircle size={16}/>}
+                                           </div>
+                                           <div className="flex-1 min-w-0">
+                                               <p className="font-bold text-sm text-gray-800 dark:text-white truncate">{t.title}</p>
+                                               <p className={`text-xs font-black mt-0.5 ${t.type === TransactionType.Income ? 'text-emerald-600' : 'text-red-500'}`}>
+                                                   {t.type === TransactionType.Expense ? '-' : '+'}{formatCurrency(t.amount)} تومان
+                                               </p>
+                                               {creator && (
+                                                   <div className="flex items-center gap-1.5 mt-1.5">
+                                                       <div className="w-4 h-4 rounded-full overflow-hidden bg-gray-200 shrink-0">
+                                                           {creator.avatarUrl
+                                                               ? <img src={creator.avatarUrl} alt="" className="w-full h-full object-cover"/>
+                                                               : <div className="w-full h-full flex items-center justify-center text-[7px] font-black bg-gradient-to-br from-primary-400 to-primary-600 text-white">{creator.firstName?.[0]}</div>
+                                                           }
+                                                       </div>
+                                                       <span className="text-[10px] text-gray-500">{creator.firstName} {creator.lastName}</span>
+                                                   </div>
+                                               )}
+                                           </div>
+                                           {requestsTab === 'pending' && (
+                                               <div className="flex items-center gap-2 shrink-0">
+                                                   <button
+                                                       onClick={async () => {
+                                                           const updated = { ...t, adminApprovalStatus: 'Approved' as const };
+                                                           await api.transactions.update(updated);
+                                                           await loadData();
+                                                           showToast('تراکنش تأیید شد', 'success');
+                                                       }}
+                                                       className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-500 text-white text-xs font-bold hover:bg-emerald-600 transition active:scale-95"
+                                                   >
+                                                       <Check size={12} strokeWidth={3}/> تأیید
+                                                   </button>
+                                                   <button
+                                                       onClick={async () => {
+                                                           const updated = { ...t, adminApprovalStatus: 'Rejected' as const };
+                                                           await api.transactions.update(updated);
+                                                           await loadData();
+                                                           showToast('درخواست رد شد', 'error');
+                                                       }}
+                                                       className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-red-500 text-white text-xs font-bold hover:bg-red-600 transition active:scale-95"
+                                                   >
+                                                       <XCircle size={12}/> رد
+                                                   </button>
+                                               </div>
+                                           )}
+                                       </div>
+                                   </div>
+                               );
+                           });
+                       })()}
+                   </div>
+               </div>
+           </div>
+       )}
+
+       {/* ─── Trash Modal ─── */}
+       {showTrashModal && (
+           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+               <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden">
+                   <div className="flex items-center justify-between p-5 border-b border-gray-100 dark:border-slate-700">
+                       <div className="flex items-center gap-3">
+                           <div className="w-10 h-10 rounded-2xl bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+                               <Trash2 size={18} className="text-red-500"/>
+                           </div>
+                           <div>
+                               <h2 className="text-base font-black text-gray-800 dark:text-white">سطل زباله</h2>
+                               <p className="text-xs text-gray-400">تراکنش‌های حذف‌شده — تا ۳۰ روز قابل بازگردانی</p>
+                           </div>
+                       </div>
+                       <button onClick={() => setShowTrashModal(false)} className="p-2 rounded-xl text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700 transition">
+                           <X size={20}/>
+                       </button>
+                   </div>
+                   <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                       {trashTransactions.length === 0 ? (
+                           <div className="text-center py-12 text-gray-400">
+                               <Trash2 size={32} className="mx-auto mb-3 opacity-30"/>
+                               <p className="text-sm">سطل زباله خالی است</p>
+                           </div>
+                       ) : trashTransactions.map(t => {
+                           const deletedDate = t.deletedAt ? new Date(t.deletedAt) : null;
+                           const daysLeft = deletedDate ? Math.max(0, 30 - Math.floor((Date.now() - deletedDate.getTime()) / 86400000)) : 0;
+                           return (
+                               <div key={t.id} className="bg-gray-50 dark:bg-slate-900 rounded-2xl p-4 border border-gray-100 dark:border-slate-700 opacity-75">
+                                   <div className="flex items-start gap-3">
+                                       <div className="w-9 h-9 rounded-xl bg-gray-200 dark:bg-slate-700 flex items-center justify-center shrink-0 text-gray-400">
+                                           {t.type === TransactionType.Income ? <ArrowUpCircle size={16}/> : <ArrowDownCircle size={16}/>}
+                                       </div>
+                                       <div className="flex-1 min-w-0">
+                                           <p className="font-bold text-sm text-gray-700 dark:text-gray-300 truncate">{t.title}</p>
+                                           <p className="text-xs text-gray-500 mt-0.5">{formatCurrency(t.amount)} تومان</p>
+                                           <p className="text-[10px] text-gray-400 mt-1">{daysLeft} روز تا حذف دائمی</p>
+                                       </div>
+                                       <button
+                                           onClick={async () => {
+                                               const updated = { ...t, deletedAt: null };
+                                               await api.transactions.update(updated);
+                                               await loadData();
+                                               showToast('تراکنش بازگردانده شد', 'success');
+                                           }}
+                                           className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-blue-200 bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-400 text-xs font-bold hover:bg-blue-100 transition active:scale-95 shrink-0"
+                                       >
+                                           <RotateCcw size={12}/> بازگردانی
+                                       </button>
+                                   </div>
+                               </div>
+                           );
+                       })}
+                   </div>
+               </div>
+           </div>
+       )}
+
     </div>
   );
 };

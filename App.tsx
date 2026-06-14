@@ -70,7 +70,7 @@ const SidebarItem = ({ to, icon: Icon, label, active, badge, hasPulse, isSidebar
     );
 };
 
-const Sidebar = ({ user, settings, unreadMessages, isSidebarOpen, setIsSidebarOpen }: { user: User, settings: AppSettings | null, unreadMessages: number, isSidebarOpen: boolean, setIsSidebarOpen: (open: boolean) => void }) => {
+const Sidebar = ({ user, settings, unreadMessages, pendingFinanceRequests, isSidebarOpen, setIsSidebarOpen }: { user: User, settings: AppSettings | null, unreadMessages: number, pendingFinanceRequests: number, isSidebarOpen: boolean, setIsSidebarOpen: (open: boolean) => void }) => {
   const location = useLocation();
   
   // Use config from settings, or fallback
@@ -190,10 +190,11 @@ const Sidebar = ({ user, settings, unreadMessages, isSidebarOpen, setIsSidebarOp
             if (!isVisible) return null;
             if (item.requiredPermission && !checkPermission(user, item.requiredPermission, settings)) return null;
 
-            // Message specific props
+            // Badge logic per item
             const isMessageItem = item.id === 'messages';
-            const badgeCount = isMessageItem ? unreadMessages : 0;
-            const pulse = isMessageItem && unreadMessages > 0;
+            const isFinanceItem = item.id === 'finance';
+            const badgeCount = isMessageItem ? unreadMessages : isFinanceItem ? pendingFinanceRequests : 0;
+            const pulse = (isMessageItem && unreadMessages > 0) || (isFinanceItem && pendingFinanceRequests > 0);
 
             return (
                 <SidebarItem 
@@ -718,6 +719,7 @@ const TopBar = () => {
 const ProtectedLayout = () => {
   const { user, previewUser, settings } = useContext(AuthContext);
   const [unreadMsgCount, setUnreadMsgCount] = useState(0);
+  const [pendingFinanceCount, setPendingFinanceCount] = useState(0);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   
   // Decide who is the "Effective User" (Actual or Preview)
@@ -734,13 +736,25 @@ const ProtectedLayout = () => {
       };
       
       fetchMsgs();
-      const interval = setInterval(fetchMsgs, 10000); 
-      
+      const interval = setInterval(fetchMsgs, 10000);
+
       const handleUpdate = () => fetchMsgs();
       window.addEventListener('messagesUpdated', handleUpdate);
-      
+
+      // Poll pending finance approval requests (Admin only)
+      const fetchPendingFinance = () => {
+          if (user?.role === UserRole.Admin) {
+              const txns: any[] = JSON.parse(localStorage.getItem('xrm_transactions') || '[]');
+              const count = txns.filter((t: any) => !t.deletedAt && t.requestAdminApproval && t.adminApprovalStatus === 'Pending').length;
+              setPendingFinanceCount(count);
+          }
+      };
+      fetchPendingFinance();
+      const financeInterval = setInterval(fetchPendingFinance, 5000);
+
       return () => {
           clearInterval(interval);
+          clearInterval(financeInterval);
           window.removeEventListener('messagesUpdated', handleUpdate);
       };
   }, [user]);
@@ -749,7 +763,7 @@ const ProtectedLayout = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-slate-900 transition-colors">
-      <Sidebar user={user} settings={settings} unreadMessages={unreadMsgCount} isSidebarOpen={isSidebarOpen} setIsSidebarOpen={setIsSidebarOpen} />
+      <Sidebar user={user} settings={settings} unreadMessages={unreadMsgCount} pendingFinanceRequests={pendingFinanceCount} isSidebarOpen={isSidebarOpen} setIsSidebarOpen={setIsSidebarOpen} />
       <div className={`${isSidebarOpen ? 'mr-64' : 'mr-20'} transition-all duration-300 print:mr-0`}>
         <TopBar />
         <main className="p-8 max-w-7xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500 print:p-0 print:max-w-none">
